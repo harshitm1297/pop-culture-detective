@@ -1,0 +1,4 @@
+# Optional cloud publish/load dependencies.
+# The local extraction and transform pipeline uses the Python standard library only.
+google-cloud-bigquery>=3.26.0,<4.0.0
+google-cloud-storage>=2.18.0,<3.0.0
