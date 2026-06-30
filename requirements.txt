@@ -2,3 +2,7 @@
 # The local extraction and transform pipeline uses the Python standard library only.
 google-cloud-bigquery>=3.26.0,<4.0.0
 google-cloud-storage>=2.18.0,<3.0.0
+
+# RAG embedding dependencies.
+sentence-transformers>=3.0.0,<4.0.0
+chromadb>=0.5.0,<1.0.0

@@ -48,6 +48,8 @@ Project/
     extract_tmdb_smoke_test.py
     extract_multisource_aligned.py
     transform_canonical.py
+    embed_document_chunks.py
+    ingest_chroma.py
     run_pipeline.py
     load_to_gcp.py
   src/
@@ -58,6 +60,7 @@ Project/
       core/
       extract/
       load/
+      rag/
       pipeline/
       sources/
       transform/
@@ -107,7 +110,7 @@ python -m venv .venv
 
 ### 4. Install Dependencies
 
-Local ETL itself uses the Python standard library. Cloud upload/load requires Google packages.
+Local ETL itself uses the Python standard library. Cloud upload/load requires Google packages. RAG embeddings require `sentence-transformers`, and local vector storage requires `chromadb`.
 
 ```powershell
 pip install -r .\requirements.txt
@@ -270,6 +273,28 @@ Outputs:
 - `attention_signals`
 - coverage/validation/dedup reports
 
+### `scripts/embed_document_chunks.py`
+
+Embeds processed document chunks for the local RAG layer.
+
+It:
+
+- reads `data/processed/<process_run_id>/document_chunks.jsonl`
+- uses `SentenceTransformer("BAAI/bge-small-en-v1.5")`
+- writes `data/processed/<process_run_id>/document_chunk_embeddings.jsonl`
+- outputs ChromaDB-ready records with `id`, `document`, `metadata`, and `embedding`
+
+### `scripts/ingest_chroma.py`
+
+Loads precomputed embeddings into a persistent local ChromaDB database.
+
+It:
+
+- reads `document_chunk_embeddings.jsonl`
+- uses `chromadb.PersistentClient`
+- upserts batches into collection `movie_chunks`
+- persists the database under `./chroma_db` by default
+
 ### `scripts/run_pipeline.py`
 
 Runs the orchestrated ETL:
@@ -306,19 +331,35 @@ python .\scripts\extract_multisource_aligned.py --movie-count 100 --tv-count 100
 python .\scripts\transform_canonical.py --source-run-id <source_run_id>
 ```
 
-### 4. Local End-To-End Pipeline
+### 4. Embed Document Chunks
+
+```powershell
+python .\scripts\embed_document_chunks.py --process-run-id <process_run_id>
+```
+
+The embedding output can be split directly into ChromaDB `ids`, `documents`, `metadatas`, and `embeddings` for collection `add` or `upsert`.
+
+### 5. Ingest Embeddings Into ChromaDB
+
+```powershell
+python .\scripts\ingest_chroma.py --input-path data\processed\<process_run_id>\document_chunk_embeddings.jsonl
+```
+
+By default, this writes a persistent ChromaDB database under `chroma_db/` and uses collection `movie_chunks`.
+
+### 6. Local End-To-End Pipeline
 
 ```powershell
 python .\scripts\run_pipeline.py --cleanup-old-raw
 ```
 
-### 5. Upload To GCP
+### 7. Upload To GCP
 
 ```powershell
 python .\scripts\load_to_gcp.py --process-run-id <process_run_id> --enable-gcs-upload --enable-bigquery-load
 ```
 
-### 6. Full ETL + Cloud In One Command
+### 8. Full ETL + Cloud In One Command
 
 ```powershell
 python .\scripts\run_pipeline.py --cleanup-old-raw --enable-gcs-upload --enable-bigquery-load
@@ -345,9 +386,11 @@ data/raw/gdelt/<run_id>/
 data/processed/<process_run_id>/titles.jsonl
 data/processed/<process_run_id>/documents.jsonl
 data/processed/<process_run_id>/document_chunks.jsonl
+data/processed/<process_run_id>/document_chunk_embeddings.jsonl
 data/processed/<process_run_id>/ratings.jsonl
 data/processed/<process_run_id>/attention_signals.jsonl
 data/processed/<process_run_id>/run_manifest.json
+chroma_db/
 ```
 
 ### Reports
