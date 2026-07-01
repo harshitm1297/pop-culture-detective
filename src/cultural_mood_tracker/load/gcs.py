@@ -14,15 +14,32 @@ def _import_storage():
     return storage
 
 
+def _import_google_auth():
+    try:
+        from google import auth
+    except ImportError as exc:  # pragma: no cover - dependency validation
+        raise RuntimeError(
+            "Missing dependency google-auth. Install requirements before running cloud upload."
+        ) from exc
+    return auth
+
+
 def build_gcs_uri(bucket_name: str, object_name: str) -> str:
     return f"gs://{bucket_name}/{object_name.replace('\\', '/')}"
 
 
-def create_storage_client(credentials_path: str | None = None):
+def create_storage_client(credentials_path: str | None = None, project_id: str | None = None):
     storage = _import_storage()
     if credentials_path:
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
-    return storage.Client()
+    auth = _import_google_auth()
+    try:
+        credentials, detected_project = auth.default()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            "Google Cloud credentials are not configured. Set GOOGLE_APPLICATION_CREDENTIALS to a service-account JSON file or run 'gcloud auth application-default login'."
+        ) from exc
+    return storage.Client(project=project_id or detected_project, credentials=credentials)
 
 
 def upload_file(*, client, bucket_name: str, local_path: Path, object_name: str) -> dict[str, str | int]:

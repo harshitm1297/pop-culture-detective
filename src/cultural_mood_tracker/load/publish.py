@@ -150,7 +150,7 @@ def run_cloud_load(
         raise RuntimeError(f"Missing reports directory: {reports_dir}")
 
     process_manifest = _load_process_manifest(processed_dir)
-    storage_client = create_storage_client(credentials_path)
+    storage_client = create_storage_client(credentials_path, project_id=project_id)
 
     raw_uploads: list[dict[str, Any]] = []
     if gcs_enabled:
