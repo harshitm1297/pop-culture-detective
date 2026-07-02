@@ -77,7 +77,7 @@ def embed_query(
     return embedding.tolist()
 
 
-def _open_collection(persist_dir: Path, collection_name: str) -> Any:
+def open_collection(persist_dir: Path, collection_name: str) -> Any:
     try:
         import chromadb
         from chromadb.config import Settings
@@ -112,12 +112,18 @@ def query_collection(
     where: dict[str, Any] | None = None,
     query_instruction: str = DEFAULT_QUERY_INSTRUCTION,
     normalize_embeddings: bool = True,
+    collection: Any | None = None,
 ) -> list[RetrievedChunk]:
-    """Embed `query` and return the top_k most similar chunks from a persisted ChromaDB collection."""
+    """Embed `query` and return the top_k most similar chunks from a persisted ChromaDB collection.
+
+    Pass an already-opened `collection` (see open_collection()) to avoid reopening the
+    PersistentClient on every call, e.g. when scoring many queries in a batch/eval run.
+    """
     if top_k < 1:
         raise ValueError("top_k must be at least 1")
 
-    collection = _open_collection(persist_dir, collection_name)
+    if collection is None:
+        collection = open_collection(persist_dir, collection_name)
     query_embedding = embed_query(
         query,
         model_name=model_name,
