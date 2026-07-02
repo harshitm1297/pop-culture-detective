@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from datetime import UTC, datetime
 import html
 import json
 import re
@@ -178,6 +179,42 @@ def parse_wikipedia_timestamp(raw_value: str) -> str:
     if len(raw_value) != 10:
         return raw_value
     return f"{raw_value[0:4]}-{raw_value[4:6]}-{raw_value[6:8]}T00:00:00Z"
+
+
+def normalize_datetime(raw_value: str | None) -> str | None:
+    if raw_value is None:
+        return None
+
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return f"{value}T00:00:00Z"
+
+    if re.fullmatch(r"\d{8}T\d{6}Z", value):
+        parsed = datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+        return parsed.isoformat().replace("+00:00", "Z")
+
+    if re.fullmatch(r"\d{14}", value):
+        parsed = datetime.strptime(value, "%Y%m%d%H%M%S").replace(tzinfo=UTC)
+        return parsed.isoformat().replace("+00:00", "Z")
+
+    if re.fullmatch(r"\d{8}", value):
+        parsed = datetime.strptime(value, "%Y%m%d").replace(tzinfo=UTC)
+        return parsed.isoformat().replace("+00:00", "Z")
+
+    iso_candidate = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(iso_candidate)
+    except ValueError:
+        return value
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    else:
+        parsed = parsed.astimezone(UTC)
+    return parsed.isoformat().replace("+00:00", "Z")
 
 
 def quality_flags_for_text(text: str, *, min_length: int) -> list[str]:

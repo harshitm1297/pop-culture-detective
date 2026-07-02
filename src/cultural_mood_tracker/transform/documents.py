@@ -11,6 +11,7 @@ from .common import (
     count_normalized_phrase_occurrences,
     find_matching_file,
     maybe_load_json,
+    normalize_datetime,
     quality_flags_for_text,
 )
 
@@ -53,7 +54,7 @@ def _build_document(
         "document_type": document_type,
         "source_record_id": source_record_id,
         "source_url": source_url,
-        "published_at": published_at,
+        "published_at": normalize_datetime(published_at),
         "author": author,
         "language": language or "en",
         "text": cleaned,

@@ -74,7 +74,7 @@ def run_pipeline(
         if enable_load and load_fn is not None:
             manifest["steps"].append(
                 {
-                    "step": "cloud_load",
+                    "step": "motherduck_load",
                     "status": "running",
                     "started_at_utc": _utc_now(),
                     "source_run_id": resolved_source_run_id,
@@ -82,18 +82,17 @@ def run_pipeline(
                 }
             )
             write_json(manifest_path, manifest)
-            cloud_manifest = load_fn(
+            load_manifest = load_fn(
                 project_root=project_root,
                 source_run_id=resolved_source_run_id,
                 process_run_id=process_run_id,
                 pipeline_run_id=pipeline_run_id,
-                enable_gcs_upload=getattr(load_args, "enable_gcs_upload", None),
-                enable_bigquery_load=getattr(load_args, "enable_bigquery_load", None),
+                enable_motherduck_load=getattr(load_args, "enable_motherduck_load", None),
             )
             manifest["steps"][-1]["status"] = "completed"
             manifest["steps"][-1]["finished_at_utc"] = _utc_now()
-            manifest["steps"][-1]["cloud_manifest_path"] = cloud_manifest.get("manifest_path")
-            manifest["cloud_manifest_path"] = cloud_manifest.get("manifest_path")
+            manifest["steps"][-1]["motherduck_manifest_path"] = load_manifest.get("manifest_path")
+            manifest["motherduck_manifest_path"] = load_manifest.get("manifest_path")
         manifest["status"] = "completed"
         manifest["finished_at_utc"] = _utc_now()
         manifest["source_run_id"] = resolved_source_run_id

@@ -19,15 +19,9 @@ class Settings:
     guardian_api_key: str
     guardian_page_size: int
     gdelt_max_records: int
-    gcp_project_id: str
-    gcp_region: str
-    gcs_bucket_raw: str
-    gcs_bucket_processed: str
-    bigquery_dataset: str
-    bigquery_location: str
-    google_application_credentials: str
-    enable_gcs_upload: bool
-    enable_bigquery_load: bool
+    motherduck_database: str
+    motherduck_token: str
+    enable_motherduck_load: bool
     local_data_root: Path
     log_level: str
 
@@ -65,15 +59,9 @@ def load_settings() -> Settings:
         guardian_api_key=os.getenv("GUARDIAN_API_KEY", "test").strip() or "test",
         guardian_page_size=int(os.getenv("GUARDIAN_PAGE_SIZE", "5")),
         gdelt_max_records=int(os.getenv("GDELT_MAX_RECORDS", "5")),
-        gcp_project_id=_get_env("GCP_PROJECT_ID"),
-        gcp_region=os.getenv("GCP_REGION", "europe-west4").strip() or "europe-west4",
-        gcs_bucket_raw=_get_env("GCS_BUCKET_RAW"),
-        gcs_bucket_processed=_get_env("GCS_BUCKET_PROCESSED"),
-        bigquery_dataset=_get_env("BIGQUERY_DATASET"),
-        bigquery_location=os.getenv("BIGQUERY_LOCATION", "europe-west4").strip() or "europe-west4",
-        google_application_credentials=_get_env("GOOGLE_APPLICATION_CREDENTIALS"),
-        enable_gcs_upload=_get_bool("ENABLE_GCS_UPLOAD", default=False),
-        enable_bigquery_load=_get_bool("ENABLE_BIGQUERY_LOAD", default=False),
+        motherduck_database=os.getenv("MOTHERDUCK_DATABASE", "cultural_mood_tracker").strip() or "cultural_mood_tracker",
+        motherduck_token=_get_env("MOTHERDUCK_TOKEN"),
+        enable_motherduck_load=_get_bool("ENABLE_MOTHERDUCK_LOAD", default=True),
         local_data_root=Path(os.getenv("LOCAL_DATA_ROOT", "data")),
         log_level=os.getenv("LOG_LEVEL", "INFO").strip() or "INFO",
     )

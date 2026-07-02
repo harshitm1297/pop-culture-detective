@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 from typing import Any
 
-from .common import find_matching_file, maybe_load_json
+from .common import find_matching_file, maybe_load_json, normalize_datetime
 
 
 def _load_imdb_ratings(path: Path) -> dict[str, dict[str, str]]:
@@ -41,7 +41,7 @@ def build_ratings(
                 "scale_max": 10,
                 "rating_count": anchor.get("tmdb_vote_count"),
                 "author": None,
-                "published_at": anchor.get("release_date"),
+                "published_at": normalize_datetime(anchor.get("release_date")),
             }
         )
 
@@ -61,7 +61,7 @@ def build_ratings(
                     "scale_max": 10,
                     "rating_count": imdb_row.get("numVotes"),
                     "author": None,
-                    "published_at": anchor.get("release_date"),
+                    "published_at": normalize_datetime(anchor.get("release_date")),
                 }
             )
 
@@ -85,7 +85,7 @@ def build_ratings(
                     "scale_max": 10,
                     "rating_count": 1,
                     "author": review.get("author"),
-                    "published_at": review.get("updated_at") or review.get("created_at"),
+                    "published_at": normalize_datetime(review.get("updated_at") or review.get("created_at")),
                 }
             )
 
