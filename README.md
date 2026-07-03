@@ -108,6 +108,9 @@ GDELT_MAX_RECORDS=5
 MOTHERDUCK_DATABASE=cultural_mood_tracker
 MOTHERDUCK_TOKEN=your-motherduck-token
 ENABLE_MOTHERDUCK_LOAD=true
+ENABLE_LOCAL_SAMPLE_RETENTION=true
+LOCAL_RETAIN_MOVIE_COUNT=30
+LOCAL_RETAIN_TV_COUNT=30
 
 LOCAL_DATA_ROOT=data
 LOG_LEVEL=INFO
@@ -126,11 +129,18 @@ That one command does:
 1. scrape aligned source data
 2. transform it into canonical processed tables
 3. upload those processed tables to `MotherDuck`
+4. keep only a local sample of `30 movies + 30 TV titles` by default after a successful upload
 
 If you want to stop after local transform and skip MotherDuck:
 
 ```powershell
 python .\scripts\run_pipeline.py --skip-motherduck-load
+```
+
+If you want to keep the full local raw and processed outputs:
+
+```powershell
+python .\scripts\run_pipeline.py --keep-full-local
 ```
 
 ## What Each Script Does

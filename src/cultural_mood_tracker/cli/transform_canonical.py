@@ -6,10 +6,19 @@ from pathlib import Path
 from cultural_mood_tracker.config import load_settings, make_run_id
 from cultural_mood_tracker.core import load_project_environment
 from cultural_mood_tracker.transform import (
+    annotate_chunks,
     build_attention_signals,
+    build_attention_vs_reception,
+    build_audience_vs_editorial_summary,
     build_document_chunks,
     build_documents,
+    build_episodes,
+    build_genre_theme_summary,
+    build_monthly_theme_trends,
+    build_people_and_credits,
     build_ratings,
+    build_title_theme_summary,
+    build_title_videos,
     build_titles,
     build_validation_report,
     deduplicate_documents,
@@ -68,6 +77,13 @@ def run_transform(project_root: Path, source_run_id: str, output_run_id: str | N
         guardian_run_dir=paths.raw_root / "guardian" / source_run_id,
         gdelt_run_dir=paths.raw_root / "gdelt" / source_run_id,
         wikidata_run_dir=paths.raw_root / "wikidata" / source_run_id,
+        critic_source_dirs={
+            "rogerebert": paths.raw_root / "rogerebert" / source_run_id,
+            "indiewire": paths.raw_root / "indiewire" / source_run_id,
+            "vulture": paths.raw_root / "vulture" / source_run_id,
+            "slant": paths.raw_root / "slant" / source_run_id,
+            "slashfilm": paths.raw_root / "slashfilm" / source_run_id,
+        },
         source_run_id=source_run_id,
     )
     documents, document_dedup_stats = deduplicate_documents(raw_documents)
@@ -83,11 +99,54 @@ def run_transform(project_root: Path, source_run_id: str, output_run_id: str | N
         wikidata_run_dir=paths.raw_root / "wikidata" / source_run_id,
         source_run_id=source_run_id,
     )
+    people, title_cast, title_crew = build_people_and_credits(
+        anchors,
+        tmdb_run_dir=paths.raw_root / "tmdb" / source_run_id,
+        source_run_id=source_run_id,
+    )
+    episodes = build_episodes(
+        anchors,
+        tvmaze_run_dir=paths.raw_root / "tvmaze" / source_run_id,
+        source_run_id=source_run_id,
+    )
+    title_videos = build_title_videos(
+        anchors,
+        tmdb_run_dir=paths.raw_root / "tmdb" / source_run_id,
+        source_run_id=source_run_id,
+    )
 
     titles_by_id = {row["title_id"]: row for row in titles}
     document_chunks = build_document_chunks(documents, titles_by_id)
+    chunk_annotations = annotate_chunks(document_chunks)
+    title_theme_summary = build_title_theme_summary(titles, chunk_annotations)
+    genre_theme_summary = build_genre_theme_summary(titles, title_theme_summary)
+    monthly_theme_trends = build_monthly_theme_trends(titles, chunk_annotations)
+    audience_vs_editorial_summary = build_audience_vs_editorial_summary(chunk_annotations)
+    attention_vs_reception = build_attention_vs_reception(
+        titles,
+        ratings,
+        attention_signals,
+        title_theme_summary,
+    )
 
-    for rows in (titles, documents, document_chunks, ratings, attention_signals):
+    for rows in (
+        titles,
+        documents,
+        document_chunks,
+        chunk_annotations,
+        ratings,
+        attention_signals,
+        people,
+        title_cast,
+        title_crew,
+        episodes,
+        title_videos,
+        title_theme_summary,
+        genre_theme_summary,
+        monthly_theme_trends,
+        audience_vs_editorial_summary,
+        attention_vs_reception,
+    ):
         for row in rows:
             row["process_run_id"] = process_run_id
 
@@ -100,8 +159,19 @@ def run_transform(project_root: Path, source_run_id: str, output_run_id: str | N
         "titles": titles,
         "documents": documents,
         "document_chunks": document_chunks,
+        "chunk_annotations": chunk_annotations,
         "ratings": ratings,
         "attention_signals": attention_signals,
+        "people": people,
+        "title_cast": title_cast,
+        "title_crew": title_crew,
+        "episodes": episodes,
+        "title_videos": title_videos,
+        "title_theme_summary": title_theme_summary,
+        "genre_theme_summary": genre_theme_summary,
+        "monthly_theme_trends": monthly_theme_trends,
+        "audience_vs_editorial_summary": audience_vs_editorial_summary,
+        "attention_vs_reception": attention_vs_reception,
     }
     for name, rows in tables.items():
         write_jsonl(processed_dir / f"{name}.jsonl", rows)
@@ -115,6 +185,11 @@ def run_transform(project_root: Path, source_run_id: str, output_run_id: str | N
         ratings=ratings,
         attention_signals=attention_signals,
         document_chunks=document_chunks,
+        people=people,
+        title_cast=title_cast,
+        title_crew=title_crew,
+        episodes=episodes,
+        title_videos=title_videos,
     )
     validation_report = build_validation_report(
         source_run_id=source_run_id,
@@ -125,6 +200,11 @@ def run_transform(project_root: Path, source_run_id: str, output_run_id: str | N
         attention_signals=attention_signals,
         document_dedup_stats=document_dedup_stats,
         chunks=document_chunks,
+        people=people,
+        title_cast=title_cast,
+        title_crew=title_crew,
+        episodes=episodes,
+        title_videos=title_videos,
     )
     manifest = {
         "source_run_id": source_run_id,
@@ -142,7 +222,15 @@ def run_transform(project_root: Path, source_run_id: str, output_run_id: str | N
     print(
         f"titles={len(titles)} documents={len(documents)} "
         f"chunks={len(document_chunks)} ratings={len(ratings)} "
-        f"attention_signals={len(attention_signals)}"
+        f"attention_signals={len(attention_signals)} people={len(people)} "
+        f"title_cast={len(title_cast)} title_crew={len(title_crew)} "
+        f"episodes={len(episodes)} title_videos={len(title_videos)} "
+        f"chunk_annotations={len(chunk_annotations)} "
+        f"title_theme_summary={len(title_theme_summary)} "
+        f"genre_theme_summary={len(genre_theme_summary)} "
+        f"monthly_theme_trends={len(monthly_theme_trends)} "
+        f"audience_vs_editorial_summary={len(audience_vs_editorial_summary)} "
+        f"attention_vs_reception={len(attention_vs_reception)}"
     )
     return process_run_id
 

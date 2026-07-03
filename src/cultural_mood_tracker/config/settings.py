@@ -19,9 +19,14 @@ class Settings:
     guardian_api_key: str
     guardian_page_size: int
     gdelt_max_records: int
+    enable_critic_blog_sources: bool
+    critic_feed_entry_limit: int
     motherduck_database: str
     motherduck_token: str
     enable_motherduck_load: bool
+    enable_local_sample_retention: bool
+    local_retain_movie_count: int
+    local_retain_tv_count: int
     local_data_root: Path
     log_level: str
 
@@ -59,9 +64,14 @@ def load_settings() -> Settings:
         guardian_api_key=os.getenv("GUARDIAN_API_KEY", "test").strip() or "test",
         guardian_page_size=int(os.getenv("GUARDIAN_PAGE_SIZE", "5")),
         gdelt_max_records=int(os.getenv("GDELT_MAX_RECORDS", "5")),
+        enable_critic_blog_sources=_get_bool("ENABLE_CRITIC_BLOG_SOURCES", default=True),
+        critic_feed_entry_limit=int(os.getenv("CRITIC_FEED_ENTRY_LIMIT", "40")),
         motherduck_database=os.getenv("MOTHERDUCK_DATABASE", "cultural_mood_tracker").strip() or "cultural_mood_tracker",
         motherduck_token=_get_env("MOTHERDUCK_TOKEN"),
         enable_motherduck_load=_get_bool("ENABLE_MOTHERDUCK_LOAD", default=True),
+        enable_local_sample_retention=_get_bool("ENABLE_LOCAL_SAMPLE_RETENTION", default=True),
+        local_retain_movie_count=int(os.getenv("LOCAL_RETAIN_MOVIE_COUNT", "30")),
+        local_retain_tv_count=int(os.getenv("LOCAL_RETAIN_TV_COUNT", "30")),
         local_data_root=Path(os.getenv("LOCAL_DATA_ROOT", "data")),
         log_level=os.getenv("LOG_LEVEL", "INFO").strip() or "INFO",
     )

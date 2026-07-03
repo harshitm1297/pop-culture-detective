@@ -2,11 +2,23 @@ from __future__ import annotations
 
 import csv
 import gzip
+import os
+import re
+import stat
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from cultural_mood_tracker.sources import ensure_dir, save_json, slugify
+from cultural_mood_tracker.sources import (
+    detect_document_type,
+    ensure_dir,
+    fetch_article_text,
+    fetch_candidate_entries,
+    list_sources,
+    save_json,
+    slugify,
+)
 from cultural_mood_tracker.sources import gdelt as gdelt_source
 from cultural_mood_tracker.sources import guardian as guardian_source
 from cultural_mood_tracker.sources import imdb as imdb_source
@@ -17,11 +29,22 @@ from cultural_mood_tracker.sources import wikipedia as wikipedia_source
 from cultural_mood_tracker.sources.wikidata import extract_enwiki_title
 
 
+def _remove_readonly(
+    func: Callable[..., Any],
+    path: str,
+    exc_info: tuple[type[BaseException], BaseException, object],
+) -> None:
+    _ = exc_info
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
 def clean_previous_outputs(raw_root: Path) -> None:
-    for name in ["tmdb_smoke", "anchors", "tmdb", "imdb", "tvmaze", "wikidata", "wikipedia", "guardian", "gdelt"]:
+    critic_sources = [source.name for source in list_sources()]
+    for name in ["tmdb_smoke", "anchors", "tmdb", "imdb", "tvmaze", "wikidata", "wikipedia", "guardian", "gdelt", *critic_sources]:
         target = raw_root / name
         if target.exists():
-            shutil.rmtree(target)
+            shutil.rmtree(target, onerror=_remove_readonly)
             print(f"[cleanup] removed {target}")
 
 
@@ -201,15 +224,166 @@ def maybe_load_json(path: Path) -> Any | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _normalize_phrase(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def _count_title_hits(text: str, title_name: str) -> int:
+    normalized_text = _normalize_phrase(text)
+    normalized_title = _normalize_phrase(title_name)
+    if not normalized_text or not normalized_title:
+        return 0
+    pattern = rf"(?<![a-z0-9]){re.escape(normalized_title)}(?![a-z0-9])"
+    return len(re.findall(pattern, normalized_text))
+
+
+def _within_window(published_at: str | None, start_date: str, end_date: str) -> bool:
+    if not published_at:
+        return True
+    try:
+        dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    return start_date <= dt.date().isoformat() <= end_date
+
+
+def _build_article_payload(
+    *,
+    source_name: str,
+    content_type: str,
+    title_name: str,
+    entry: dict[str, Any],
+    article_text: str,
+    match_method: str,
+    match_confidence: float,
+) -> dict[str, Any]:
+    return {
+        "source_name": source_name,
+        "content_type": content_type,
+        "title_name": title_name,
+        "headline": entry.get("title"),
+        "source_url": entry.get("link"),
+        "author": entry.get("author"),
+        "published_at": entry.get("published_at"),
+        "description": entry.get("description"),
+        "document_type": detect_document_type(
+            content_type=content_type,
+            headline=entry.get("title") or "",
+            url=entry.get("link") or "",
+        ),
+        "match_method": match_method,
+        "match_confidence": match_confidence,
+        "text": article_text,
+    }
+
+
+def fetch_critic_blog_sources(
+    anchors: list[dict[str, Any]],
+    *,
+    raw_root: Path,
+    run_id: str,
+    start_date: str,
+    end_date: str,
+    entry_limit: int,
+) -> None:
+    article_cache: dict[str, str] = {}
+
+    for source in list_sources():
+        source_root = raw_root / source.name / run_id
+        ensure_dir(source_root)
+        try:
+            entries = fetch_candidate_entries(
+                source,
+                start_date=start_date,
+                end_date=end_date,
+                entry_limit=entry_limit,
+            )
+        except RuntimeError as exc:
+            payload = {"error": str(exc), "source_url": source.url, "strategy": source.strategy}
+            for content_type in ("movie", "tv"):
+                type_dir = source_root / content_type
+                ensure_dir(type_dir)
+                save_json(type_dir / "_feed_error.json", payload)
+            print(f"[{source.name}] source fetch failed: {exc}")
+            continue
+
+        for anchor in anchors:
+            type_dir = source_root / anchor["content_type"]
+            ensure_dir(type_dir)
+            matched_articles: list[dict[str, Any]] = []
+
+            for entry in entries:
+                if not _within_window(entry.get("published_at"), start_date, end_date):
+                    continue
+                title_hits = _count_title_hits(
+                    " ".join(
+                        part for part in [entry.get("title") or "", entry.get("description") or ""] if part
+                    ),
+                    anchor["title_name"],
+                )
+                if title_hits <= 0:
+                    continue
+
+                link = entry.get("link") or ""
+                if not link:
+                    continue
+                if link not in article_cache:
+                    try:
+                        article_cache[link] = fetch_article_text(link)
+                    except RuntimeError:
+                        article_cache[link] = ""
+                article_text = article_cache[link]
+                body_hits = _count_title_hits(article_text, anchor["title_name"])
+                if title_hits > 0 and body_hits > 0:
+                    match_method = f"{source.name}_headline_and_body_exact"
+                    match_confidence = 0.95
+                elif title_hits >= 2:
+                    match_method = f"{source.name}_headline_repeated_exact"
+                    match_confidence = 0.85
+                else:
+                    match_method = f"{source.name}_headline_only_match"
+                    match_confidence = 0.65
+                matched_articles.append(
+                    _build_article_payload(
+                        source_name=source.name,
+                        content_type=anchor["content_type"],
+                        title_name=anchor["title_name"],
+                        entry=entry,
+                        article_text=article_text,
+                        match_method=match_method,
+                        match_confidence=match_confidence,
+                    )
+                )
+
+            save_json(
+                type_dir / f"{anchor['tmdb_id']}_{slugify(anchor['title_name'])}.json",
+                {
+                    "source_name": source.name,
+                    "source_url": source.url,
+                    "strategy": source.strategy,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "feed_entry_count": len(entries),
+                    "articles": matched_articles,
+                },
+            )
+
+
 def download_imdb_and_filter(anchors: list[dict[str, Any]], imdb_dir: Path) -> None:
     ensure_dir(imdb_dir)
     imdb_ids = {anchor["imdb_id"] for anchor in anchors if anchor.get("imdb_id")}
 
     (imdb_dir / "title.basics.tsv.gz").write_bytes(imdb_source.download_basics())
     (imdb_dir / "title.ratings.tsv.gz").write_bytes(imdb_source.download_ratings())
+    (imdb_dir / "title.crew.tsv.gz").write_bytes(imdb_source.download_crew())
+    (imdb_dir / "title.principals.tsv.gz").write_bytes(imdb_source.download_principals())
+    (imdb_dir / "title.episode.tsv.gz").write_bytes(imdb_source.download_episode())
 
     matched_basics_path = imdb_dir / "matched_title_basics.tsv"
     matched_ratings_path = imdb_dir / "matched_title_ratings.tsv"
+    matched_crew_path = imdb_dir / "matched_title_crew.tsv"
+    matched_principals_path = imdb_dir / "matched_title_principals.tsv"
+    matched_episode_path = imdb_dir / "matched_title_episode.tsv"
 
     with gzip.open(imdb_dir / "title.basics.tsv.gz", "rt", encoding="utf-8") as fh, matched_basics_path.open("w", encoding="utf-8", newline="") as out_fh:
         reader = csv.DictReader(fh, delimiter="\t")
@@ -226,3 +400,50 @@ def download_imdb_and_filter(anchors: list[dict[str, Any]], imdb_dir: Path) -> N
         for row in reader:
             if row.get("tconst") in imdb_ids:
                 writer.writerow(row)
+
+    crew_name_ids: set[str] = set()
+    with gzip.open(imdb_dir / "title.crew.tsv.gz", "rt", encoding="utf-8") as fh, matched_crew_path.open("w", encoding="utf-8", newline="") as out_fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        writer = csv.DictWriter(out_fh, fieldnames=reader.fieldnames, delimiter="\t")
+        writer.writeheader()
+        for row in reader:
+            if row.get("tconst") not in imdb_ids:
+                continue
+            writer.writerow(row)
+            for field in ("directors", "writers"):
+                for raw_value in (row.get(field) or "").split(","):
+                    if raw_value and raw_value != "\\N":
+                        crew_name_ids.add(raw_value)
+
+    principal_name_ids: set[str] = set()
+    with gzip.open(imdb_dir / "title.principals.tsv.gz", "rt", encoding="utf-8") as fh, matched_principals_path.open("w", encoding="utf-8", newline="") as out_fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        writer = csv.DictWriter(out_fh, fieldnames=reader.fieldnames, delimiter="\t")
+        writer.writeheader()
+        for row in reader:
+            if row.get("tconst") not in imdb_ids:
+                continue
+            writer.writerow(row)
+            if row.get("nconst") and row.get("nconst") != "\\N":
+                principal_name_ids.add(row["nconst"])
+
+    with gzip.open(imdb_dir / "title.episode.tsv.gz", "rt", encoding="utf-8") as fh, matched_episode_path.open("w", encoding="utf-8", newline="") as out_fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        writer = csv.DictWriter(out_fh, fieldnames=reader.fieldnames, delimiter="\t")
+        writer.writeheader()
+        for row in reader:
+            if row.get("parentTconst") in imdb_ids or row.get("tconst") in imdb_ids:
+                writer.writerow(row)
+
+    all_name_ids = sorted(crew_name_ids | principal_name_ids)
+    if all_name_ids:
+        (imdb_dir / "name.basics.tsv.gz").write_bytes(imdb_source.download_name_basics())
+        matched_names_path = imdb_dir / "matched_name_basics.tsv"
+        with gzip.open(imdb_dir / "name.basics.tsv.gz", "rt", encoding="utf-8") as fh, matched_names_path.open("w", encoding="utf-8", newline="") as out_fh:
+            reader = csv.DictReader(fh, delimiter="\t")
+            writer = csv.DictWriter(out_fh, fieldnames=reader.fieldnames, delimiter="\t")
+            writer.writeheader()
+            keep = set(all_name_ids)
+            for row in reader:
+                if row.get("nconst") in keep:
+                    writer.writerow(row)

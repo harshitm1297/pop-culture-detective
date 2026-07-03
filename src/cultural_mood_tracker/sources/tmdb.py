@@ -54,11 +54,42 @@ def discover_titles(
 
 def fetch_details(api_key: str, content_type: str, tmdb_id: int, language: str) -> dict[str, Any]:
     endpoint = f"{BASE_TMDB_URL}/{content_type}/{tmdb_id}"
-    params = {"api_key": api_key, "language": language, "append_to_response": "external_ids"}
+    params = {
+        "api_key": api_key,
+        "language": language,
+        "append_to_response": "external_ids,credits,videos",
+    }
     return http_get_json(endpoint, params, user_agent=TMDB_USER_AGENT)
 
 
-def fetch_reviews(api_key: str, content_type: str, tmdb_id: int, language: str) -> dict[str, Any]:
+def fetch_reviews(
+    api_key: str,
+    content_type: str,
+    tmdb_id: int,
+    language: str,
+    *,
+    max_pages: int = 3,
+) -> dict[str, Any]:
     endpoint = f"{BASE_TMDB_URL}/{content_type}/{tmdb_id}/reviews"
-    params = {"api_key": api_key, "language": language, "page": 1}
-    return http_get_json(endpoint, params, user_agent=TMDB_USER_AGENT)
+    first_page = http_get_json(
+        endpoint,
+        {"api_key": api_key, "language": language, "page": 1},
+        user_agent=TMDB_USER_AGENT,
+    )
+    results = list(first_page.get("results", []))
+    total_pages = int(first_page.get("total_pages", 1) or 1)
+    collected_pages = 1
+
+    for page in range(2, min(total_pages, max_pages) + 1):
+        payload = http_get_json(
+            endpoint,
+            {"api_key": api_key, "language": language, "page": page},
+            user_agent=TMDB_USER_AGENT,
+        )
+        results.extend(payload.get("results", []))
+        collected_pages += 1
+
+    first_page["results"] = results
+    first_page["collected_pages"] = collected_pages
+    first_page["collected_result_count"] = len(results)
+    return first_page

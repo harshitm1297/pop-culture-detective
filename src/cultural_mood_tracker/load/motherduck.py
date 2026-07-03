@@ -18,6 +18,14 @@ OPTIONAL_TABLE_NAMES = (
     "people",
     "title_cast",
     "title_crew",
+    "episodes",
+    "title_videos",
+    "chunk_annotations",
+    "title_theme_summary",
+    "genre_theme_summary",
+    "monthly_theme_trends",
+    "audience_vs_editorial_summary",
+    "attention_vs_reception",
 )
 
 TABLE_CASTS: dict[str, dict[str, str]] = {
@@ -35,6 +43,13 @@ TABLE_CASTS: dict[str, dict[str, str]] = {
     },
     "attention_signals": {
         "timestamp_utc": "TIMESTAMPTZ",
+    },
+    "episodes": {
+        "airdate": "DATE",
+        "airstamp": "TIMESTAMPTZ",
+    },
+    "title_videos": {
+        "published_at": "TIMESTAMPTZ",
     },
 }
 
@@ -62,6 +77,12 @@ def ensure_database(*, connection, database_name: str) -> None:
     safe_name = database_name.replace('"', '""')
     connection.execute(f'CREATE DATABASE IF NOT EXISTS "{safe_name}"')
     connection.execute(f'USE "{safe_name}"')
+
+
+def connect_to_database(*, token: str, database_name: str):
+    connection = create_motherduck_connection(token=token)
+    ensure_database(connection=connection, database_name=database_name)
+    return connection
 
 
 def _sql_path(path: Path) -> str:
@@ -117,6 +138,9 @@ def load_processed_tables(
         if not source_path.exists():
             skipped.append({"table_name": table_name, "reason": "missing_file"})
             continue
+        if source_path.stat().st_size == 0:
+            skipped.append({"table_name": table_name, "reason": "empty_file"})
+            continue
 
         safe_table = table_name.replace('"', '""')
         connection.execute(
@@ -155,3 +179,23 @@ def build_manifest(
         "loaded_tables": load_results["loaded_tables"],
         "skipped_tables": load_results["skipped_tables"],
     }
+
+
+def list_database_tables(*, connection) -> list[str]:
+    rows = connection.execute("SHOW TABLES").fetchall()
+    return sorted(row[0] for row in rows)
+
+
+def preview_table_rows(
+    *,
+    connection,
+    table_name: str,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    if limit <= 0:
+        raise RuntimeError("Preview limit must be greater than 0.")
+
+    safe_table = table_name.replace('"', '""')
+    cursor = connection.execute(f'SELECT * FROM "{safe_table}" LIMIT {int(limit)}')
+    columns = [column[0] for column in cursor.description]
+    return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]

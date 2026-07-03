@@ -45,9 +45,31 @@ def parse_args() -> argparse.Namespace:
         help="Remove previous generated raw source folders before extraction.",
     )
     parser.add_argument(
+        "--disable-critic-blogs",
+        action="store_true",
+        help="Skip curated critic blog extraction during the extraction stage.",
+    )
+    parser.add_argument(
         "--skip-motherduck-load",
         action="store_true",
         help="Skip the MotherDuck upload step and stop after local transform.",
+    )
+    parser.add_argument(
+        "--keep-full-local",
+        action="store_true",
+        help="Do not downsample local raw and processed outputs after MotherDuck upload.",
+    )
+    parser.add_argument(
+        "--local-retain-movie-count",
+        type=int,
+        default=None,
+        help="Local movie titles to keep after MotherDuck upload. Defaults to LOCAL_RETAIN_MOVIE_COUNT or 30.",
+    )
+    parser.add_argument(
+        "--local-retain-tv-count",
+        type=int,
+        default=None,
+        help="Local TV titles to keep after MotherDuck upload. Defaults to LOCAL_RETAIN_TV_COUNT or 30.",
     )
     return parser.parse_args()
 
@@ -81,6 +103,7 @@ def build_extract_namespace(settings, args: argparse.Namespace) -> SimpleNamespa
         ),
         enable_gdelt=args.enable_gdelt,
         cleanup_old_raw=args.cleanup_old_raw,
+        disable_critic_blogs=getattr(args, "disable_critic_blogs", False),
     )
 
 
@@ -103,6 +126,13 @@ def main() -> int:
         load_fn=run_motherduck_load,
         load_args=load_args,
         enable_load=bool(load_args.enable_motherduck_load),
+        enable_local_retention=(
+            False
+            if args.keep_full_local or args.skip_motherduck_load
+            else settings.enable_local_sample_retention
+        ),
+        local_retain_movie_count=args.local_retain_movie_count,
+        local_retain_tv_count=args.local_retain_tv_count,
         source_run_id=args.source_run_id,
     )
 

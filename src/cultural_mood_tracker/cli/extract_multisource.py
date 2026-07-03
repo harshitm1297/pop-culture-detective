@@ -12,6 +12,7 @@ from cultural_mood_tracker.extract.aligned import (
     call_source,
     clean_previous_outputs,
     download_imdb_and_filter,
+    fetch_critic_blog_sources,
     fetch_gdelt,
     fetch_guardian,
     fetch_tvmaze,
@@ -60,6 +61,11 @@ def parse_args(settings) -> argparse.Namespace:
         action="store_true",
         help="Remove previous generated raw source folders before writing the new run.",
     )
+    parser.add_argument(
+        "--disable-critic-blogs",
+        action="store_true",
+        help="Skip curated critic blog extraction.",
+    )
     return parser.parse_args()
 
 
@@ -93,7 +99,8 @@ def run_extraction(project_root: Path, args: argparse.Namespace) -> str:
     wikipedia_dir = raw_root / "wikipedia" / run_id
     guardian_dir = raw_root / "guardian" / run_id
     gdelt_dir = raw_root / "gdelt" / run_id
-    for path in [anchor_dir, tmdb_dir, imdb_dir, tvmaze_dir, wikidata_dir, wikipedia_dir, guardian_dir, gdelt_dir]:
+    critic_dirs = [raw_root / name / run_id for name in ("rogerebert", "indiewire", "vulture", "slant", "slashfilm")]
+    for path in [anchor_dir, tmdb_dir, imdb_dir, tvmaze_dir, wikidata_dir, wikipedia_dir, guardian_dir, gdelt_dir, *critic_dirs]:
         ensure_dir(path)
 
     print("[anchors] building TMDB anchor list")
@@ -146,6 +153,17 @@ def run_extraction(project_root: Path, args: argparse.Namespace) -> str:
         call_source("tvmaze", lambda: fetch_tvmaze(anchor, tvmaze_dir), anchor)
         time.sleep(0.05)
 
+    if settings.enable_critic_blog_sources and not args.disable_critic_blogs:
+        print("[critic] fetching curated critic/blog sources")
+        fetch_critic_blog_sources(
+            anchors,
+            raw_root=raw_root,
+            run_id=run_id,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            entry_limit=settings.critic_feed_entry_limit,
+        )
+
     manifest = {
         "run_at_utc": run_id,
         "movie_count": args.movie_count,
@@ -160,6 +178,11 @@ def run_extraction(project_root: Path, args: argparse.Namespace) -> str:
             "wikidata",
             "wikipedia",
             "guardian",
+            "rogerebert",
+            "indiewire",
+            "vulture",
+            "slant",
+            "slashfilm",
             *(["gdelt"] if args.enable_gdelt and args.gdelt_max_records > 0 else []),
         ],
         "same_anchor_titles": True,
