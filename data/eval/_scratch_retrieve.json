@@ -1,0 +1,130 @@
+{
+  "query": "Disclosure Day",
+  "results": [
+    {
+      "chunk_id": "movie_1275779:guardian:film/2026/jun/19/you-can-handle-the-truth-why-cinema-suddenly-loves-conspiracy-theories:chunk_002",
+      "chunk_text": "“People have a right to know the truth,” declares the young whistleblower in Steven Spielberg’s Disclosure Day, a line that echoes a thousand other whistleblowers. As played by Josh O’Connor, heroic Daniel Kellner has a backpack of state secrets that incontrovertibly prove the existence of aliens and points to a sinister government cover-up. Disclosure Day is fiction, but it hints at insider knowledge. The 79-year-old director – the most trusted brand in Hollywood – even appears in the trailer to vouch for the film’s authenticity. He splices himself amid the crop circles and spacecraft, commenting on the action like an authoritative news anchor. He says: “Wouldn’t it be wonderful for people to know that all of this is true?” We are not alone, Spielberg tells us – and neither, for that matter, is his film. Disclosure Day is merely the biggest and splashiest in a wave of paranoid conspiracy tales that recall the 1970s heyday of The Parallax View, Soylent Green, Capricorn One and The Conversation. These modern-day descendants tell different stories and wander down different rabbit holes. But they",
+      "metadata": {
+        "chunk_index": 2,
+        "chunk_word_count": 180,
+        "content_type": "movie",
+        "document_id": "movie_1275779:guardian:film/2026/jun/19/you-can-handle-the-truth-why-cinema-suddenly-loves-conspiracy-theories",
+        "document_type": "critic_article",
+        "genre": "[\"Science Fiction\", \"Thriller\"]",
+        "is_usable_for_rag": true,
+        "language": "en",
+        "process_run_id": "20260702T073525Z",
+        "published_at": "2026-06-19T07:00:27Z",
+        "release_year": 2026,
+        "source_match_confidence": 0.9,
+        "source_match_method": "guardian_trail_and_body_exact",
+        "source_name": "guardian",
+        "source_run_id": "20260701T125645Z",
+        "title_id": "movie_1275779",
+        "title_name": "Disclosure Day"
+      },
+      "distance": 0.2771152853965759,
+      "similarity": 0.7228847146034241
+    },
+    {
+      "chunk_id": "movie_1275779:guardian:film/2026/jun/17/disclosure-day-aliens-spielberg-emily-blunt-and-josh-o-connor:chunk_001",
+      "chunk_text": "Disclosure Day is great. But Spielberg overestimates our capacity for empathy Spielberg’s sci-fi blockbuster starring Emily Blunt and Josh O’Connor may be spectacular, but it misjudges how much humans are prepared to tolerate abuse of groups we see as ‘other’ Steven Spielberg has converted his longstanding fascination with the possible existence of aliens into considerable commercial and critical success and now, 49 years after Close Encounters and 44 after ET, the film-maker has returned to the subject for the sci-fi spectacular Disclosure Day. The film follows cybersecurity expert Daniel Kellner (Josh O’Connor) and weather presenter Margaret Fairchild (Emily Blunt) as they become state-secret whistleblowers, working with Hugo (Colman Domingo) to expose nearly eight decades’ worth of evidence that the US government has known about extraterrestrial life. The files are stolen from Wardex, a shady organisation run by Noah Scanlon (Colin Firth) where Daniel and Hugo used to work, including video footage that shows US organisations not just meeting alien life forms but exploiting, vivisecting and killing them too. When this footage is shown to Daniel’s girlfriend Jane (Eve Hewson), with",
+      "metadata": {
+        "chunk_index": 1,
+        "chunk_word_count": 180,
+        "content_type": "movie",
+        "document_id": "movie_1275779:guardian:film/2026/jun/17/disclosure-day-aliens-spielberg-emily-blunt-and-josh-o-connor",
+        "document_type": "critic_article",
+        "genre": "[\"Science Fiction\", \"Thriller\"]",
+        "is_usable_for_rag": true,
+        "language": "en",
+        "process_run_id": "20260702T073525Z",
+        "published_at": "2026-06-17T11:56:45Z",
+        "release_year": 2026,
+        "source_match_confidence": 0.98,
+        "source_match_method": "guardian_headline_exact",
+        "source_name": "guardian",
+        "source_run_id": "20260701T125645Z",
+        "title_id": "movie_1275779",
+        "title_name": "Disclosure Day"
+      },
+      "distance": 0.3239321708679199,
+      "similarity": 0.6760678291320801
+    },
+    {
+      "chunk_id": "movie_1275779:guardian:film/2026/jun/16/disclosure-day-spielberg-et-close-encounters-of-the-third-kind-et:chunk_003",
+      "chunk_text": "of AI: Artificial Intelligence (recipient of a harsh C), dead level with Indiana Jones and the Kingdom of the Crystal Skull. Headmaster Haneke again shakes his weary head. Despite the proximity of aliens, the new film’s focus is primarily human: the secrets we keep, the lies we tell. Disclosure Day thereby dovetails neatly with the themes of several mature-period Spielberg works, notably 2015’s Bridge of Spies and 2017’s The Post. To locate the source of this interest, you need only revisit The Fabelmans – Spielberg’s probing and perceptive movie-memoir of 2022 – which dramatised the effects similar deceptions had on his own household growing up. Screenwriter David Koepp has form in this area, too: his script for last year’s spry and gripping Steven Soderbergh thriller Black Bag unpicked the alibis of bedhopping spies. Yet Disclosure Day’s weak spot is its tissue-thin and arbitrary-seeming plot, its own diaphanous cover story for some altogether antiquated and simplistic editorial. The setup, granted, is strong: Close Encounters, updated for the information age. First contact here is no longer as harmonious as a five-note call-and-response;",
+      "metadata": {
+        "chunk_index": 3,
+        "chunk_word_count": 180,
+        "content_type": "movie",
+        "document_id": "movie_1275779:guardian:film/2026/jun/16/disclosure-day-spielberg-et-close-encounters-of-the-third-kind-et",
+        "document_type": "critic_article",
+        "genre": "[\"Science Fiction\", \"Thriller\"]",
+        "is_usable_for_rag": true,
+        "language": "en",
+        "process_run_id": "20260702T073525Z",
+        "published_at": "2026-06-16T06:00:48Z",
+        "release_year": 2026,
+        "source_match_confidence": 0.98,
+        "source_match_method": "guardian_headline_exact",
+        "source_name": "guardian",
+        "source_run_id": "20260701T125645Z",
+        "title_id": "movie_1275779",
+        "title_name": "Disclosure Day"
+      },
+      "distance": 0.33201801776885986,
+      "similarity": 0.6679819822311401
+    },
+    {
+      "chunk_id": "movie_1339713:guardian:film/2026/jun/15/spielberg-disclosure-day-box-office-obsession-backrooms-michael:chunk_001",
+      "chunk_text": "Spielberg’s Disclosure Day opens strongly at box office as Obsession, Backrooms – and Michael – smash records UFO thriller is on track to become director’s best performing original title in the US, taking just shy of $100m in global revenue after opening weekend Disclosure Day, Steven Spielberg’s thriller in which it is revealed the US has been experimenting on UFOs for almost 80 years, is on track to become his best performing original title in the US. The film, which opened in 77 territories, took $44m (£32.7m) domestically over the three-day weekend for a global total of about $92.9m (£69.4m) with $7.6m (£5.6m) of that from the UK and Ireland. Spielberg’s most recent film, 2023’s The Fabelmans, ended on a global total of $45.6m, while 2021’s West Side Story took $76m. Disclosure Day, which stars Emily Blunt as a weather forecaster who can channel alien discourse, as well as Josh O’Connor as a whistleblower poised to tell the world about UFO abuse, cost $115m to make and an estimated $80m to market. Pundits estimate the film will need to take",
+      "metadata": {
+        "chunk_index": 1,
+        "chunk_word_count": 180,
+        "content_type": "movie",
+        "document_id": "movie_1339713:guardian:film/2026/jun/15/spielberg-disclosure-day-box-office-obsession-backrooms-michael",
+        "document_type": "critic_article",
+        "genre": "[\"Horror\", \"Thriller\"]",
+        "is_usable_for_rag": true,
+        "language": "en",
+        "process_run_id": "20260702T073525Z",
+        "published_at": "2026-06-15T14:36:16Z",
+        "release_year": 2026,
+        "source_match_confidence": 0.98,
+        "source_match_method": "guardian_headline_exact",
+        "source_name": "guardian",
+        "source_run_id": "20260701T125645Z",
+        "title_id": "movie_1339713",
+        "title_name": "Obsession"
+      },
+      "distance": 0.3343573808670044,
+      "similarity": 0.6656426191329956
+    },
+    {
+      "chunk_id": "movie_1275779:tmdb_review:6a2d28e52ae39e3e5f9d3f36:chunk_002",
+      "chunk_text": "platforms on the internet. The infrastructure exists. The filmmakers simply have no clue how modern information systems work. And then there's the blandness. The villains have no depth—why do they actually care about keeping this secret? The heroes have no passion—what's driving them besides a vague sense of duty? There's no tension, no stakes that feel real, no reason to invest in anyone on screen. It's hollow. The whole thing is just hollow. Disclosure Day isn't terrible. It's worse: it's boring. Please let it remain undisclosed!",
+      "metadata": {
+        "chunk_index": 2,
+        "chunk_word_count": 86,
+        "content_type": "movie",
+        "document_id": "movie_1275779:tmdb_review:6a2d28e52ae39e3e5f9d3f36",
+        "document_type": "user_review",
+        "genre": "[\"Science Fiction\", \"Thriller\"]",
+        "is_usable_for_rag": true,
+        "language": "en",
+        "process_run_id": "20260702T073525Z",
+        "published_at": "2026-06-13T09:56:21Z",
+        "release_year": 2026,
+        "source_match_confidence": 1.0,
+        "source_match_method": "anchor_file_binding",
+        "source_name": "tmdb",
+        "source_run_id": "20260701T125645Z",
+        "title_id": "movie_1275779",
+        "title_name": "Disclosure Day"
+      },
+      "distance": 0.3445354700088501,
+      "similarity": 0.6554645299911499
+    }
+  ]
+}

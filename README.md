@@ -347,6 +347,29 @@ python .\scripts\ingest_chroma.py --input-path data\processed\<process_run_id>\d
 
 By default, this writes a persistent ChromaDB database under `chroma_db/` and uses collection `movie_chunks`.
 
+### 6. Retrieval
+```powershell
+python .\scripts\retrieve.py --query "a love story" --top-k 5
+```
+
+### 7. Retrieval evaluation
+``` powershel
+python .\scripts\retrieval_eval.py
+```
+
+### 8. Prompt Construction
+Offline (recommended first — proves prompting is independently testable, no ChromaDB/model needed)
+```powershell
+python .\scripts\retrieve.py --query "Disclosure Day" --top-k 5 --output-path data\eval\_scratch_retrieve.json
+python .\scripts\build_prompt.py --input-path data\eval\_scratch_retrieve.json
+```
+
+Live (retrieval + prompt construction chained in one call):
+```powershell
+python .\scripts\build_prompt.py --query "a whistleblower exposes a corporate cover-up about extraterrestrial life" --top-k 5
+```
+
+
 ### 6. Local End-To-End Pipeline
 
 ```powershell
