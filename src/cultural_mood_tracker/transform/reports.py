@@ -13,7 +13,17 @@ def build_coverage_report(
     ratings: list[dict[str, Any]],
     attention_signals: list[dict[str, Any]],
     document_chunks: list[dict[str, Any]],
+    people: list[dict[str, Any]] | None = None,
+    title_cast: list[dict[str, Any]] | None = None,
+    title_crew: list[dict[str, Any]] | None = None,
+    episodes: list[dict[str, Any]] | None = None,
+    title_videos: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    people = people or []
+    title_cast = title_cast or []
+    title_crew = title_crew or []
+    episodes = episodes or []
+    title_videos = title_videos or []
     docs_by_source = Counter(row["source_name"] for row in documents)
     usable_docs_by_source = Counter(
         row["source_name"] for row in documents if row.get("is_usable_for_rag")
@@ -31,6 +41,11 @@ def build_coverage_report(
         "chunk_count": len(document_chunks),
         "rating_count": len(ratings),
         "attention_signal_count": len(attention_signals),
+        "people_count": len(people),
+        "title_cast_count": len(title_cast),
+        "title_crew_count": len(title_crew),
+        "episode_count": len(episodes),
+        "title_video_count": len(title_videos),
         "documents_by_source": dict(docs_by_source),
         "usable_documents_by_source": dict(usable_docs_by_source),
         "titles_with_documents_by_source": {

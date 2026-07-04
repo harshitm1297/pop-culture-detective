@@ -34,6 +34,27 @@ def http_get_json(
         raise RuntimeError(f"Non-JSON response for {url}: {exc}") from exc
 
 
+def http_get_text(
+    url: str,
+    params: dict[str, Any] | None = None,
+    *,
+    user_agent: str,
+    timeout: int = 60,
+) -> str:
+    if params:
+        url = f"{url}?{urlencode(params)}"
+
+    request = Request(url, headers={"User-Agent": user_agent})
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return response.read().decode("utf-8", errors="replace")
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {exc.code} for {url}\n{body}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Network error for {url}: {exc}") from exc
+
+
 def http_download_binary(url: str, *, user_agent: str, timeout: int = 180) -> bytes:
     request = Request(url, headers={"User-Agent": user_agent})
     try:

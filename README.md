@@ -1,38 +1,38 @@
 # Cultural Mood Tracker ETL
 
-This repository contains the ETL implementation for the `movies + TV` version of the Cultural Mood Tracker project. The goal is to extract recent English-language title data, align multiple evidence sources to the same TMDB anchor titles, transform that data into canonical tables, and optionally publish the outputs to `GCS` and `BigQuery`.
+This repository contains the ETL implementation for the `movies + TV` version of the Cultural Mood Tracker project. The pipeline extracts recent English-language title data, aligns multiple evidence sources to the same TMDB anchor titles, transforms that data into canonical tables, and publishes the processed outputs to `MotherDuck`.
 
 ## Scope
 
 - Domain: English-language `movies` and `TV shows`
-- Window: `last 1 year`, currently fixed in `.env`
-- Primary use: local ETL now, RAG-ready processed data later
-- Deployment target: local development first, `GCP` storage/warehouse optional
+- Window: configured in `.env`, usually the last 1 year
+- Primary use: local ETL plus shared online warehousing in `MotherDuck`
+- RAG readiness: `documents` and `document_chunks` are the main text evidence layers
 
 ## Data Sources
 
 The ETL currently uses these sources:
 
 - `TMDB API`
-  - Anchor titles
-  - Title metadata
-  - Overviews
+  - anchor titles
+  - title metadata
+  - overviews
   - TMDB user reviews
-  - External IDs such as IMDb IDs
+  - external IDs such as IMDb IDs
 - `IMDb public datasets`
   - `title.basics.tsv.gz`
   - `title.ratings.tsv.gz`
-  - Used for title normalization and ratings enrichment
+  - used for title normalization and ratings enrichment
 - `TVMaze API`
-  - Supplemental TV metadata aligned through IMDb ID
+  - supplemental TV metadata aligned through IMDb ID
 - `Wikidata API`
-  - Entity linking and English Wikipedia article titles
+  - entity linking and English Wikipedia article titles
 - `Wikipedia Pageviews API`
-  - Attention signals over time
+  - attention signals over time
 - `Guardian Open Platform`
   - English editorial coverage for matched titles
 - `GDELT`
-  - Optional stretch source, disabled by default because it is noisy and rate-limited
+  - optional stretch source, disabled by default because it is noisy and rate-limited
 
 ## Repository Layout
 
@@ -50,11 +50,11 @@ Project/
     transform_canonical.py
     embed_document_chunks.py
     ingest_chroma.py
+    load_to_motherduck.py
+    query_motherduck.py
     run_pipeline.py
-    load_to_gcp.py
   src/
     cultural_mood_tracker/
-      __init__.py
       cli/
       config/
       core/
@@ -66,212 +66,114 @@ Project/
       transform/
   .env
   .env.example
-  .gitignore
   README.md
   requirements.txt
 ```
 
-Notes:
-
-- `scripts/` contains the runnable entry points.
-- `src/cultural_mood_tracker/cli/` contains the actual CLI implementations.
-- `data/` is ignored by git, so extracted and processed data should not be pushed.
-
-## Files To Share With Teammates
-
-You mentioned you will share these two files:
-
-- `.env`
-- `service-account.json`
-
-That is enough to let teammates run the same pipeline, but each teammate still needs to place the JSON file on their own machine and update the local path if necessary.
-
 ## Teammate Setup
 
-### 1. Clone The Repository
-
-Clone the branch:
+### 1. Clone the repository
 
 ```powershell
 git clone --branch ETL-implementation https://github.com/harshitm1297/pop-culture-detective.git
 cd .\pop-culture-detective\Project
 ```
 
-### 2. Python
-
-Use `Python 3.11+`. This project has been tested with `Python 3.13` locally.
-
-### 3. Create And Activate A Virtual Environment
+### 2. Create and activate a virtual environment
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-### 4. Install Dependencies
+### 3. Install Dependencies
 
-Local ETL itself uses the Python standard library. Cloud upload/load requires Google packages. RAG embeddings require `sentence-transformers`, and local vector storage requires `chromadb`.
+Local ETL itself uses the Python standard library. MotherDuck publishing requires `duckdb`. RAG embeddings require `sentence-transformers`, and local vector storage requires `chromadb`.
 
 ```powershell
 pip install -r .\requirements.txt
 ```
 
-### 5. Copy The Shared Files
+### 4. Create `.env`
 
-Place the shared files locally:
+Start from `.env.example` and fill the required values:
 
-- `.env` in the `Project/` folder
-- `service-account.json` anywhere on the local machine
+```env
+TMDB_API_KEY=your-tmdb-api-key
+TMDB_LANGUAGE=en-US
+TMDB_REGION=
+TMDB_START_DATE=2025-06-29
+TMDB_END_DATE=2026-06-29
+TMDB_MOVIE_SAMPLE_SIZE=300
+TMDB_TV_SAMPLE_SIZE=200
 
-Recommended local layout:
+GUARDIAN_API_KEY=test
+GUARDIAN_PAGE_SIZE=5
+GDELT_MAX_RECORDS=5
 
-```text
-Project/
-  .env
-  credentials/
-    service-account.json
+MOTHERDUCK_DATABASE=cultural_mood_tracker
+MOTHERDUCK_TOKEN=your-motherduck-token
+ENABLE_MOTHERDUCK_LOAD=true
+ENABLE_LOCAL_SAMPLE_RETENTION=true
+LOCAL_RETAIN_MOVIE_COUNT=30
+LOCAL_RETAIN_TV_COUNT=30
+
+LOCAL_DATA_ROOT=data
+LOG_LEVEL=INFO
 ```
 
-If you place the service account JSON there, set:
+## Main Command
 
-```text
-GOOGLE_APPLICATION_CREDENTIALS=credentials\service-account.json
+The main entry point is:
+
+```powershell
+python .\scripts\run_pipeline.py
 ```
 
-Do not commit the JSON file to git.
+That one command does:
 
-## `.env` Variables
+1. scrape aligned source data
+2. transform it into canonical processed tables
+3. upload those processed tables to `MotherDuck`
+4. keep only a local sample of `30 movies + 30 TV titles` by default after a successful upload
 
-These are the important settings your teammates should understand.
+If you want to stop after local transform and skip MotherDuck:
 
-### TMDB Extraction
+```powershell
+python .\scripts\run_pipeline.py --skip-motherduck-load
+```
 
-- `TMDB_API_KEY`
-  - Required
-  - TMDB API key
-- `TMDB_LANGUAGE`
-  - Current default: `en-US`
-  - Controls TMDB response language
-- `TMDB_REGION`
-  - Optional regional bias
-- `TMDB_START_DATE`
-  - Lower bound for movie release date / TV first air date
-- `TMDB_END_DATE`
-  - Upper bound for movie release date / TV first air date
-- `TMDB_MOVIE_SAMPLE_SIZE`
-  - Number of movie anchors to fetch
-- `TMDB_TV_SAMPLE_SIZE`
-  - Number of TV anchors to fetch
+If you want to keep the full local raw and processed outputs:
 
-### Secondary Sources
-
-- `GUARDIAN_API_KEY`
-  - `test` works for basic Guardian access
-- `GUARDIAN_PAGE_SIZE`
-  - Number of Guardian records per title query
-- `GDELT_MAX_RECORDS`
-  - GDELT cap per title
-
-### GCP / Warehouse
-
-- `GCP_PROJECT_ID`
-  - GCP project containing the buckets and BigQuery resources
-- `GCP_REGION`
-  - Example: `europe-west4`
-- `GCS_BUCKET_RAW`
-  - Bucket for raw snapshots
-- `GCS_BUCKET_PROCESSED`
-  - Bucket for processed outputs and reports
-- `BIGQUERY_DATASET`
-  - Dataset for canonical tables
-- `BIGQUERY_LOCATION`
-  - Must be compatible with your dataset region
-- `GOOGLE_APPLICATION_CREDENTIALS`
-  - Local path to the service account JSON file
-- `ENABLE_GCS_UPLOAD`
-  - `true` or `false`
-- `ENABLE_BIGQUERY_LOAD`
-  - `true` or `false`
-
-### Local Runtime
-
-- `LOCAL_DATA_ROOT`
-  - Usually `data`
-- `LOG_LEVEL`
-  - Usually `INFO`
-
-## GCP Prerequisites
-
-Before `load_to_gcp.py` will work, all of these must already exist or be correctly permissioned:
-
-- `GCS_BUCKET_RAW`
-- `GCS_BUCKET_PROCESSED`
-- Service account JSON with access to those buckets
-- BigQuery permissions for the configured dataset or project
-
-### Required Bucket Permissions
-
-The service account needs write access to both buckets. The simplest workable role is:
-
-- `Storage Object Admin`
-
-Grant it on:
-
-- `cmt-tmdb-raw-data-engineering-course`
-- `cmt-tmdb-processed-data-engineering-course`
-
-### Required BigQuery Permissions
-
-At minimum, the service account should be able to:
-
-- create the dataset if needed
-- create/load tables
-- run query jobs
-
-Typical roles:
-
-- `BigQuery Data Editor`
-- `BigQuery Job User`
-
-If your team wants fewer permission issues during setup, a temporary broader role is acceptable during development, then tighten later.
+```powershell
+python .\scripts\run_pipeline.py --keep-full-local
+```
 
 ## What Each Script Does
 
 ### `scripts/extract_tmdb_smoke_test.py`
 
-Quick connectivity test for TMDB.
-
-It:
-
-- loads `.env`
-- calls TMDB discover
-- fetches details and reviews for a small sample
-- optionally fetches Wikipedia pageviews
-- saves raw JSON under `data/raw/tmdb_smoke/<run_id>/`
+Quick connectivity test for TMDB. It loads `.env`, calls TMDB discover, fetches details and reviews for a small sample, optionally fetches Wikipedia pageviews, and saves raw JSON under `data/raw/tmdb_smoke/<run_id>/`.
 
 ### `scripts/extract_multisource_aligned.py`
 
-Full raw extraction for the ETL baseline.
-
-It:
-
-- creates TMDB anchor titles
-- downloads IMDb metadata snapshots
-- fetches aligned raw data from TVMaze, Wikidata, Wikipedia, Guardian, and optional GDELT
-- saves source-specific raw files under `data/raw/<source>/<run_id>/`
+Full raw extraction for the ETL baseline. It creates TMDB anchor titles, downloads IMDb metadata snapshots, fetches aligned raw data from TVMaze, Wikidata, Wikipedia, Guardian, and optional GDELT, and saves source-specific raw files under `data/raw/<source>/<run_id>/`.
 
 ### `scripts/transform_canonical.py`
 
-Transforms a raw aligned run into canonical processed tables.
-
-Outputs:
+Transforms a raw aligned run into canonical processed tables. The current core outputs are:
 
 - `titles`
 - `documents`
 - `document_chunks`
 - `ratings`
 - `attention_signals`
-- coverage/validation/dedup reports
+
+If optional tables such as `people`, `title_cast`, or `title_crew` exist in a processed run, the MotherDuck loader will publish them too.
+
+### `scripts/load_to_motherduck.py`
+
+Publishes a processed run into the configured `MotherDuck` database. It defaults to the latest processed run if you do not pass a run ID.
 
 ### `scripts/embed_document_chunks.py`
 
@@ -297,19 +199,11 @@ It:
 
 ### `scripts/run_pipeline.py`
 
-Runs the orchestrated ETL:
+Runs the full ETL flow end to end and is the recommended command for normal use.
 
-- extraction
-- transform
-- optional cloud load
+### `scripts/query_motherduck.py`
 
-### `scripts/load_to_gcp.py`
-
-Uploads local ETL outputs to cloud:
-
-- raw files to `GCS_BUCKET_RAW`
-- processed files and reports to `GCS_BUCKET_PROCESSED`
-- canonical JSONL tables into `BigQuery`
+Runs a MotherDuck query against the configured database.
 
 ## Recommended Run Order
 
@@ -350,19 +244,19 @@ By default, this writes a persistent ChromaDB database under `chroma_db/` and us
 ### 6. Local End-To-End Pipeline
 
 ```powershell
-python .\scripts\run_pipeline.py --cleanup-old-raw
+python .\scripts\run_pipeline.py --skip-motherduck-load
 ```
 
-### 7. Upload To GCP
+### 7. Publish To MotherDuck
 
 ```powershell
-python .\scripts\load_to_gcp.py --process-run-id <process_run_id> --enable-gcs-upload --enable-bigquery-load
+python .\scripts\load_to_motherduck.py --process-run-id <process_run_id>
 ```
 
-### 8. Full ETL + Cloud In One Command
+### 8. Full ETL + MotherDuck In One Command
 
 ```powershell
-python .\scripts\run_pipeline.py --cleanup-old-raw --enable-gcs-upload --enable-bigquery-load
+python .\scripts\run_pipeline.py
 ```
 
 ## Output Locations
@@ -393,53 +287,32 @@ data/processed/<process_run_id>/run_manifest.json
 chroma_db/
 ```
 
+Optional processed tables may also appear, depending on the transform version:
+
+```text
+data/processed/<process_run_id>/people.jsonl
+data/processed/<process_run_id>/title_cast.jsonl
+data/processed/<process_run_id>/title_crew.jsonl
+```
+
 ### Reports
 
 ```text
 data/reports/<process_run_id>/coverage_report.json
 data/reports/<process_run_id>/validation_report.json
 data/reports/<process_run_id>/document_deduplication.json
-data/reports/<process_run_id>/cloud_load_manifest.json
+data/reports/<process_run_id>/motherduck_load_manifest.json
 ```
 
-## Common GCP Failure Modes
+## MotherDuck Notes
 
-### `404 bucket does not exist`
-
-Cause:
-
-- bucket name in `.env` is wrong
-- bucket was never created
-
-Check:
-
-- `GCS_BUCKET_RAW`
-- `GCS_BUCKET_PROCESSED`
-
-### `403 storage.objects.create denied`
-
-Cause:
-
-- service account does not have write permission to the bucket
-
-Fix:
-
-- grant `Storage Object Admin` on the target bucket
-
-### `BigQuery permission denied`
-
-Cause:
-
-- service account can access Storage but not BigQuery
-
-Fix:
-
-- add `BigQuery Data Editor`
-- add `BigQuery Job User`
+- `MOTHERDUCK_TOKEN` is required for upload
+- `MOTHERDUCK_DATABASE` is created automatically if it does not already exist
+- teammates should use their own `MotherDuck` tokens when possible
+- the processed files remain the reproducible local source of truth; `MotherDuck` is the shared online warehouse layer
 
 ## Notes
 
-- Do not commit `data/` outputs.
-- Do not commit service account JSON files.
-- If teammates use a different local JSON path, they must update `GOOGLE_APPLICATION_CREDENTIALS` in `.env`.
-- `GDELT` is optional and disabled by default because it introduces more noise and rate-limit issues than the other baseline sources.
+- Do not commit `data/` outputs
+- Do not commit `.env` with real tokens if the repository is public
+- `GDELT` is optional and disabled by default because it introduces more noise and rate-limit issues than the baseline sources

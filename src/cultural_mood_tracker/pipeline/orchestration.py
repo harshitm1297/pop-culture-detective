@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from cultural_mood_tracker.config import load_settings, make_run_id
+from cultural_mood_tracker.pipeline.local_retention import apply_local_retention
 from cultural_mood_tracker.transform.common import write_json
 
 
@@ -21,6 +22,9 @@ def run_pipeline(
     load_fn=None,
     load_args=None,
     enable_load: bool = False,
+    enable_local_retention: bool | None = None,
+    local_retain_movie_count: int | None = None,
+    local_retain_tv_count: int | None = None,
     source_run_id: str | None = None,
 ) -> dict[str, Any]:
     settings = load_settings()
@@ -74,7 +78,7 @@ def run_pipeline(
         if enable_load and load_fn is not None:
             manifest["steps"].append(
                 {
-                    "step": "cloud_load",
+                    "step": "motherduck_load",
                     "status": "running",
                     "started_at_utc": _utc_now(),
                     "source_run_id": resolved_source_run_id,
@@ -82,18 +86,54 @@ def run_pipeline(
                 }
             )
             write_json(manifest_path, manifest)
-            cloud_manifest = load_fn(
+            load_manifest = load_fn(
                 project_root=project_root,
                 source_run_id=resolved_source_run_id,
                 process_run_id=process_run_id,
                 pipeline_run_id=pipeline_run_id,
-                enable_gcs_upload=getattr(load_args, "enable_gcs_upload", None),
-                enable_bigquery_load=getattr(load_args, "enable_bigquery_load", None),
+                enable_motherduck_load=getattr(load_args, "enable_motherduck_load", None),
             )
             manifest["steps"][-1]["status"] = "completed"
             manifest["steps"][-1]["finished_at_utc"] = _utc_now()
-            manifest["steps"][-1]["cloud_manifest_path"] = cloud_manifest.get("manifest_path")
-            manifest["cloud_manifest_path"] = cloud_manifest.get("manifest_path")
+            manifest["steps"][-1]["motherduck_manifest_path"] = load_manifest.get("manifest_path")
+            manifest["motherduck_manifest_path"] = load_manifest.get("manifest_path")
+            should_apply_retention = (
+                settings.enable_local_sample_retention
+                if enable_local_retention is None
+                else enable_local_retention
+            )
+            if should_apply_retention:
+                manifest["steps"].append(
+                    {
+                        "step": "local_retention",
+                        "status": "running",
+                        "started_at_utc": _utc_now(),
+                        "source_run_id": resolved_source_run_id,
+                        "process_run_id": process_run_id,
+                    }
+                )
+                write_json(manifest_path, manifest)
+                retention_manifest = apply_local_retention(
+                    project_root=project_root,
+                    source_run_id=resolved_source_run_id,
+                    process_run_id=process_run_id,
+                    movie_count=(
+                        settings.local_retain_movie_count
+                        if local_retain_movie_count is None
+                        else local_retain_movie_count
+                    ),
+                    tv_count=(
+                        settings.local_retain_tv_count
+                        if local_retain_tv_count is None
+                        else local_retain_tv_count
+                    ),
+                )
+                manifest["steps"][-1]["status"] = "completed"
+                manifest["steps"][-1]["finished_at_utc"] = _utc_now()
+                manifest["steps"][-1]["local_retention_manifest_path"] = str(
+                    paths.reports_root / process_run_id / "local_retention_manifest.json"
+                )
+                manifest["local_retention"] = retention_manifest
         manifest["status"] = "completed"
         manifest["finished_at_utc"] = _utc_now()
         manifest["source_run_id"] = resolved_source_run_id

@@ -8,24 +8,28 @@ from cultural_mood_tracker.cli.extract_multisource import run_extraction
 from cultural_mood_tracker.cli.transform_canonical import run_transform
 from cultural_mood_tracker.config import load_settings
 from cultural_mood_tracker.core import load_project_environment
-from cultural_mood_tracker.load import run_cloud_load
+from cultural_mood_tracker.load import run_motherduck_load
 from cultural_mood_tracker.pipeline import run_pipeline
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the Cultural Mood Tracker ETL pipeline with explicit orchestration."
+        description=(
+            "Run the Cultural Mood Tracker ETL pipeline end to end. "
+            "By default, this extracts source data, transforms it, and uploads the "
+            "processed tables to MotherDuck."
+        )
     )
     parser.add_argument(
         "--source-run-id",
         default=None,
         help="Skip extraction and transform this existing aligned raw run ID.",
     )
-    parser.add_argument("--movie-count", type=int, default=None)
-    parser.add_argument("--tv-count", type=int, default=None)
-    parser.add_argument("--language", default=None)
-    parser.add_argument("--start-date", default=None)
-    parser.add_argument("--end-date", default=None)
+    parser.add_argument("--movie-count", type=int, default=None, help="Defaults to TMDB_MOVIE_SAMPLE_SIZE from .env.")
+    parser.add_argument("--tv-count", type=int, default=None, help="Defaults to TMDB_TV_SAMPLE_SIZE from .env.")
+    parser.add_argument("--language", default=None, help="Defaults to TMDB_LANGUAGE from .env.")
+    parser.add_argument("--start-date", default=None, help="Defaults to TMDB_START_DATE from .env.")
+    parser.add_argument("--end-date", default=None, help="Defaults to TMDB_END_DATE from .env.")
     parser.add_argument("--output-root", default=None)
     parser.add_argument("--guardian-api-key", default=None)
     parser.add_argument("--guardian-page-size", type=int, default=None)
@@ -41,22 +45,47 @@ def parse_args() -> argparse.Namespace:
         help="Remove previous generated raw source folders before extraction.",
     )
     parser.add_argument(
-        "--enable-gcs-upload",
+        "--disable-critic-blogs",
         action="store_true",
-        help="Upload raw, processed, and report outputs to GCS after transform.",
+        help="Skip curated critic blog extraction during the extraction stage.",
     )
     parser.add_argument(
-        "--enable-bigquery-load",
+        "--skip-motherduck-load",
         action="store_true",
-        help="Load processed JSONL tables into BigQuery after transform.",
+        help="Skip the MotherDuck upload step and stop after local transform.",
+    )
+    parser.add_argument(
+        "--keep-full-local",
+        action="store_true",
+        help="Do not downsample local raw and processed outputs after MotherDuck upload.",
+    )
+    parser.add_argument(
+        "--local-retain-movie-count",
+        type=int,
+        default=None,
+        help="Local movie titles to keep after MotherDuck upload. Defaults to LOCAL_RETAIN_MOVIE_COUNT or 30.",
+    )
+    parser.add_argument(
+        "--local-retain-tv-count",
+        type=int,
+        default=None,
+        help="Local TV titles to keep after MotherDuck upload. Defaults to LOCAL_RETAIN_TV_COUNT or 30.",
     )
     return parser.parse_args()
 
 
 def build_extract_namespace(settings, args: argparse.Namespace) -> SimpleNamespace:
     return SimpleNamespace(
-        movie_count=args.movie_count if args.movie_count is not None else 100,
-        tv_count=args.tv_count if args.tv_count is not None else 100,
+        movie_count=(
+            args.movie_count
+            if args.movie_count is not None
+            else settings.tmdb_movie_sample_size
+        ),
+        tv_count=(
+            args.tv_count
+            if args.tv_count is not None
+            else settings.tmdb_tv_sample_size
+        ),
         language=args.language or settings.tmdb_language,
         start_date=args.start_date or settings.tmdb_start_date,
         end_date=args.end_date or settings.tmdb_end_date,
@@ -74,6 +103,7 @@ def build_extract_namespace(settings, args: argparse.Namespace) -> SimpleNamespa
         ),
         enable_gdelt=args.enable_gdelt,
         cleanup_old_raw=args.cleanup_old_raw,
+        disable_critic_blogs=getattr(args, "disable_critic_blogs", False),
     )
 
 
@@ -83,8 +113,9 @@ def main() -> int:
     args = parse_args()
     extract_args = build_extract_namespace(settings, args)
     load_args = SimpleNamespace(
-        enable_gcs_upload=(args.enable_gcs_upload or settings.enable_gcs_upload),
-        enable_bigquery_load=(args.enable_bigquery_load or settings.enable_bigquery_load),
+        enable_motherduck_load=(
+            False if args.skip_motherduck_load else settings.enable_motherduck_load
+        ),
     )
 
     manifest = run_pipeline(
@@ -92,9 +123,16 @@ def main() -> int:
         extract_fn=run_extraction,
         extract_args=extract_args,
         transform_fn=run_transform,
-        load_fn=run_cloud_load,
+        load_fn=run_motherduck_load,
         load_args=load_args,
-        enable_load=bool(load_args.enable_gcs_upload or load_args.enable_bigquery_load),
+        enable_load=bool(load_args.enable_motherduck_load),
+        enable_local_retention=(
+            False
+            if args.keep_full_local or args.skip_motherduck_load
+            else settings.enable_local_sample_retention
+        ),
+        local_retain_movie_count=args.local_retain_movie_count,
+        local_retain_tv_count=args.local_retain_tv_count,
         source_run_id=args.source_run_id,
     )
 

@@ -55,6 +55,7 @@ def build_titles(
         tvmaze = maybe_load_json(tvmaze_path) if tvmaze_path else {}
         if isinstance(tvmaze, dict) and "error" in tvmaze:
             tvmaze = {}
+        tvmaze_embedded = tvmaze.get("_embedded", {}) if isinstance(tvmaze, dict) else {}
 
         wikidata_path = find_matching_file(wikidata_run_dir / anchor["content_type"], f"{anchor['tmdb_id']}_", ".json")
         wikidata = maybe_load_json(wikidata_path) if wikidata_path else {}
@@ -66,6 +67,8 @@ def build_titles(
         genres = [genre.get("name") for genre in details.get("genres", []) if genre.get("name")]
         spoken_languages = [item.get("english_name") or item.get("name") for item in anchor.get("spoken_languages", []) if item.get("english_name") or item.get("name")]
         production_countries = [item.get("iso_3166_1") for item in details.get("production_countries", []) if item.get("iso_3166_1")]
+        tmdb_credits = details.get("credits", {}) if isinstance(details, dict) else {}
+        tmdb_videos = ((details.get("videos") or {}).get("results")) if isinstance(details, dict) else []
 
         rows.append(
             {
@@ -90,6 +93,9 @@ def build_titles(
                 "tmdb_vote_average": anchor.get("tmdb_vote_average"),
                 "tmdb_vote_count": anchor.get("tmdb_vote_count"),
                 "tmdb_review_count": anchor.get("tmdb_review_count"),
+                "tmdb_cast_count": len(tmdb_credits.get("cast", [])),
+                "tmdb_crew_count": len(tmdb_credits.get("crew", [])),
+                "tmdb_video_count": len(tmdb_videos or []),
                 "imdb_title_type": imdb_basic.get("titleType"),
                 "imdb_primary_title": clean_text(imdb_basic.get("primaryTitle") or ""),
                 "imdb_original_title": clean_text(imdb_basic.get("originalTitle") or ""),
@@ -105,6 +111,7 @@ def build_titles(
                 "tvmaze_genres": tvmaze.get("genres", []) if isinstance(tvmaze.get("genres"), list) else [],
                 "tvmaze_network": (tvmaze.get("network") or {}).get("name") if isinstance(tvmaze, dict) else None,
                 "tvmaze_summary": clean_text(tvmaze.get("summary") or ""),
+                "tvmaze_episode_count": len(tvmaze_embedded.get("episodes", []) or []),
                 "wikidata_label_en": label_en or None,
                 "wikidata_description_en": description_en or None,
                 "wikipedia_article_title": enwiki_title or None,

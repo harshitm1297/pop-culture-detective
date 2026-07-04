@@ -12,11 +12,13 @@ tmp/
 data/raw/*
 data/staging/*
 data/processed/*
+data/warehouse/*
 data/logs/*
 data/reports/*
 
 !data/raw/.gitkeep
 !data/staging/.gitkeep
 !data/processed/.gitkeep
+!data/warehouse/.gitkeep
 !data/logs/.gitkeep
 !data/reports/.gitkeep

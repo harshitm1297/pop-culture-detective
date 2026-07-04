@@ -14,7 +14,17 @@ def build_validation_report(
     attention_signals: list[dict[str, Any]],
     document_dedup_stats: dict[str, Any],
     chunks: list[dict[str, Any]],
+    people: list[dict[str, Any]] | None = None,
+    title_cast: list[dict[str, Any]] | None = None,
+    title_crew: list[dict[str, Any]] | None = None,
+    episodes: list[dict[str, Any]] | None = None,
+    title_videos: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    people = people or []
+    title_cast = title_cast or []
+    title_crew = title_crew or []
+    episodes = episodes or []
+    title_videos = title_videos or []
     document_flag_counts = Counter()
     for row in documents:
         for flag in row.get("quality_flags", []):
@@ -34,6 +44,11 @@ def build_validation_report(
         "usable_document_count": len(usable_documents),
         "chunk_count": len(chunks),
         "attention_signal_count": len(attention_signals),
+        "people_count": len(people),
+        "title_cast_count": len(title_cast),
+        "title_crew_count": len(title_crew),
+        "episode_count": len(episodes),
+        "title_video_count": len(title_videos),
         "titles_missing_imdb_id": titles_missing_imdb,
         "titles_missing_wikidata_id": titles_missing_wikidata,
         "documents_without_source_url": docs_without_url,

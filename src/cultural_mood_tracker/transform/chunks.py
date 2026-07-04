@@ -8,21 +8,42 @@ def _split_words(text: str) -> list[str]:
     return text.split()
 
 
+def _chunk_policy(document_type: str) -> tuple[int, int, int]:
+    policies = {
+        "user_review": (200, 40, 50),
+        "critic_article": (300, 60, 70),
+        "news_article": (260, 50, 60),
+        "show_summary": (140, 30, 40),
+        "overview": (140, 30, 40),
+        "entity_description": (80, 10, 20),
+    }
+    return policies.get(document_type, (180, 40, 40))
+
+
+def _chunk_priority(document: dict[str, Any]) -> str:
+    if document.get("document_type") == "user_review":
+        return "high"
+    if document.get("document_type") == "critic_article":
+        return "high"
+    if document.get("document_type") == "show_summary":
+        return "medium"
+    if document.get("document_type") == "overview":
+        return "medium"
+    return "low"
+
+
 def build_document_chunks(
     documents: list[dict[str, Any]],
     titles_by_id: dict[str, dict[str, Any]],
-    *,
-    target_words: int = 180,
-    overlap_words: int = 40,
-    min_chunk_words: int = 40,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    step = max(target_words - overlap_words, 1)
 
     for document in documents:
         if not document.get("is_usable_for_rag"):
             continue
 
+        target_words, overlap_words, min_chunk_words = _chunk_policy(document.get("document_type") or "")
+        step = max(target_words - overlap_words, 1)
         words = _split_words(document.get("text") or "")
         if not words:
             continue
@@ -64,6 +85,8 @@ def build_document_chunks(
                     "release_year": title.get("release_year"),
                     "source_match_method": document.get("source_match_method"),
                     "source_match_confidence": document.get("source_match_confidence"),
+                    "chunk_source_type": document.get("document_type"),
+                    "chunk_priority": _chunk_priority(document),
                     "chunk_index": index,
                     "chunk_word_count": len(chunk_words),
                     "chunk_text": chunk_text,
