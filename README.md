@@ -50,6 +50,9 @@ Project/
     transform_canonical.py
     embed_document_chunks.py
     ingest_chroma.py
+    retrieve.py
+    retrieval_eval.py
+    build_prompt.py
     load_to_motherduck.py
     query_motherduck.py
     run_pipeline.py
@@ -75,7 +78,7 @@ Project/
 ### 1. Clone the repository
 
 ```powershell
-git clone --branch ETL-implementation https://github.com/harshitm1297/pop-culture-detective.git
+git clone --branch chiara https://github.com/harshitm1297/pop-culture-detective.git
 cd .\pop-culture-detective\Project
 ```
 
@@ -88,7 +91,7 @@ python -m venv .venv
 
 ### 3. Install Dependencies
 
-Local ETL itself uses the Python standard library. MotherDuck publishing requires `duckdb`. RAG embeddings require `sentence-transformers`, and local vector storage requires `chromadb`.
+Local ETL itself uses the Python standard library. MotherDuck publishing requires `duckdb`. RAG embeddings and retrieval require `sentence-transformers`, and local vector storage requires `chromadb`.
 
 ```powershell
 pip install -r .\requirements.txt
@@ -197,6 +200,42 @@ It:
 - upserts batches into collection `movie_chunks`
 - persists the database under `./chroma_db` by default
 
+### `scripts/retrieve.py`
+
+Runs semantic retrieval over the local ChromaDB collection.
+
+It:
+
+- embeds the natural-language `--query` with the same SentenceTransformer model used for ingestion
+- searches the persistent ChromaDB database under `./chroma_db` by default
+- returns top matching chunks with similarity scores, metadata, source names, and text previews
+- optionally writes full retrieval results to JSON with `--output-path`
+- supports metadata filters such as `--content-type movie` or `--source-name guardian`
+
+### `scripts/retrieval_eval.py`
+
+Evaluates retrieval quality against the hand-labeled golden set in `data/eval/retrieval_golden_set.jsonl`.
+
+It computes:
+
+- `MRR`
+- `recall@k`
+- `precision@k`
+- missing relevant chunk IDs, which usually indicate corpus or ChromaDB drift
+
+By default, it writes a detailed JSON report under `data/reports/retrieval_eval/`.
+
+### `scripts/build_prompt.py`
+
+Builds a grounded RAG prompt from retrieved chunks.
+
+It has two modes:
+
+- offline mode: reads JSON previously written by `retrieve.py --output-path`
+- live mode: retrieves from ChromaDB and builds the prompt in one command
+
+The prompt builder outputs a system prompt, user prompt, included and excluded chunk IDs, and context size. Use `--max-context-chars` to control the context budget and `--min-similarity` to drop weak matches before prompt assembly.
+
 ### `scripts/run_pipeline.py`
 
 Runs the full ETL flow end to end and is the recommended command for normal use.
@@ -241,42 +280,70 @@ python .\scripts\ingest_chroma.py --input-path data\processed\<process_run_id>\d
 
 By default, this writes a persistent ChromaDB database under `chroma_db/` and uses collection `movie_chunks`.
 
-### 6. Retrieval
+### 6. Retrieve Relevant Chunks
+
 ```powershell
-python .\scripts\retrieve.py --query "a love story" --top-k 5
+python .\scripts\retrieve.py --query "a whistleblower exposes a corporate cover-up about extraterrestrial life" --top-k 5
 ```
 
-### 7. Retrieval evaluation
-``` powershel
+Useful filters:
+
+```powershell
+python .\scripts\retrieve.py --query "critical reviews about a dystopian TV show" --top-k 5 --content-type tv
+python .\scripts\retrieve.py --query "press coverage for a popular movie" --top-k 5 --source-name guardian
+```
+
+To save retrieval results for offline prompt iteration:
+
+```powershell
+python .\scripts\retrieve.py --query "Disclosure Day" --top-k 5 --output-path data\eval\_scratch_retrieve.json
+```
+
+### 7. Evaluate Retrieval
+
+```powershell
 python .\scripts\retrieval_eval.py
 ```
 
-### 8. Prompt Construction
-Offline (recommended first — proves prompting is independently testable, no ChromaDB/model needed)
+To test specific `k` values or save the report to a known path:
+
 ```powershell
-python .\scripts\retrieve.py --query "Disclosure Day" --top-k 5 --output-path data\eval\_scratch_retrieve.json
+python .\scripts\retrieval_eval.py --k 1 3 5 10 --output-path data\reports\retrieval_eval\latest.json
+```
+
+### 8. Build A Grounded Prompt
+
+Offline mode is recommended first because it proves prompt construction independently of ChromaDB and the embedding model:
+
+```powershell
 python .\scripts\build_prompt.py --input-path data\eval\_scratch_retrieve.json
 ```
 
-Live (retrieval + prompt construction chained in one call):
+Live mode chains retrieval and prompt construction in one call:
+
 ```powershell
 python .\scripts\build_prompt.py --query "a whistleblower exposes a corporate cover-up about extraterrestrial life" --top-k 5
 ```
 
+To keep only stronger matches and write the complete prompt payload:
 
-### 6. Local End-To-End Pipeline
+```powershell
+python .\scripts\build_prompt.py --query "a love story with public attention signals" --top-k 8 --min-similarity 0.3 --output-path data\eval\_scratch_prompt.json
+```
+
+### 9. Local End-To-End Pipeline
 
 ```powershell
 python .\scripts\run_pipeline.py --skip-motherduck-load
 ```
 
-### 7. Publish To MotherDuck
+### 10. Publish To MotherDuck
 
 ```powershell
 python .\scripts\load_to_motherduck.py --process-run-id <process_run_id>
 ```
 
-### 8. Full ETL + MotherDuck In One Command
+### 11. Full ETL + MotherDuck In One Command
 
 ```powershell
 python .\scripts\run_pipeline.py
@@ -308,6 +375,8 @@ data/processed/<process_run_id>/ratings.jsonl
 data/processed/<process_run_id>/attention_signals.jsonl
 data/processed/<process_run_id>/run_manifest.json
 chroma_db/
+data/eval/_scratch_retrieve.json
+data/eval/_scratch_prompt.json
 ```
 
 Optional processed tables may also appear, depending on the transform version:
@@ -325,6 +394,7 @@ data/reports/<process_run_id>/coverage_report.json
 data/reports/<process_run_id>/validation_report.json
 data/reports/<process_run_id>/document_deduplication.json
 data/reports/<process_run_id>/motherduck_load_manifest.json
+data/reports/retrieval_eval/<run_id>.json
 ```
 
 ## MotherDuck Notes
