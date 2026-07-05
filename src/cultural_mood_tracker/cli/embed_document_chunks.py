@@ -5,18 +5,18 @@ from pathlib import Path
 
 from cultural_mood_tracker.config import load_settings
 from cultural_mood_tracker.core import load_project_environment
-from cultural_mood_tracker.rag import DEFAULT_EMBEDDING_MODEL, embed_document_chunks_file
-from cultural_mood_tracker.transform.common import find_latest_run_id
+from cultural_mood_tracker.rag import DEFAULT_EMBEDDING_MODEL, embed_document_chunks, load_document_chunks
+from cultural_mood_tracker.rag.document_chunks import DEFAULT_LOCAL_DOCUMENT_CHUNKS_PATH
 
 
-def parse_args(default_process_run_id: str | None) -> argparse.Namespace:
+def parse_args(default_process_run_id: str) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Embed processed document chunks into ChromaDB-ready JSONL records."
     )
     parser.add_argument(
         "--process-run-id",
         default=default_process_run_id,
-        help="Processed run ID containing document_chunks.jsonl. Defaults to the latest processed run.",
+        help="Processed run ID used for the output embedding file.",
     )
     parser.add_argument(
         "--model-name",
@@ -56,13 +56,10 @@ def run_embed_document_chunks(
     paths.ensure()
 
     processed_dir = paths.processed_root / process_run_id
-    input_path = processed_dir / "document_chunks.jsonl"
-    if not input_path.exists():
-        raise RuntimeError(f"Missing document chunks file: {input_path}")
-
     output_path = processed_dir / output_name
-    count = embed_document_chunks_file(
-        input_path,
+    chunks = load_document_chunks(settings.rag_data_source)
+    count = embed_document_chunks(
+        chunks,
         output_path,
         model_name=model_name,
         batch_size=batch_size,
@@ -73,22 +70,13 @@ def run_embed_document_chunks(
     return output_path
 
 
-def find_default_process_run_id(processed_root: Path) -> str | None:
-    if not processed_root.exists():
-        return None
-    try:
-        return find_latest_run_id(processed_root)
-    except RuntimeError:
-        return None
-
-
 def main() -> int:
     project_root = load_project_environment(Path(__file__))
     settings = load_settings()
     paths = settings.build_paths(project_root)
     paths.ensure()
 
-    default_process_run_id = find_default_process_run_id(paths.processed_root)
+    default_process_run_id = DEFAULT_LOCAL_DOCUMENT_CHUNKS_PATH.parts[2]
 
     args = parse_args(default_process_run_id)
     if not args.process_run_id:

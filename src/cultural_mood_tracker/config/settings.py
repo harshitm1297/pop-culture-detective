@@ -27,6 +27,7 @@ class Settings:
     enable_local_sample_retention: bool
     local_retain_movie_count: int
     local_retain_tv_count: int
+    rag_data_source: str
     local_data_root: Path
     log_level: str
 
@@ -72,6 +73,7 @@ def load_settings() -> Settings:
         enable_local_sample_retention=_get_bool("ENABLE_LOCAL_SAMPLE_RETENTION", default=True),
         local_retain_movie_count=int(os.getenv("LOCAL_RETAIN_MOVIE_COUNT", "30")),
         local_retain_tv_count=int(os.getenv("LOCAL_RETAIN_TV_COUNT", "30")),
+        rag_data_source=os.getenv("RAG_DATA_SOURCE", "local").strip().lower() or "local",
         local_data_root=Path(os.getenv("LOCAL_DATA_ROOT", "data")),
         log_level=os.getenv("LOG_LEVEL", "INFO").strip() or "INFO",
     )

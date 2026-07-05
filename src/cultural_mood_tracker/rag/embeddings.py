@@ -49,8 +49,14 @@ def _metadata_value(value: Any) -> str | int | float | bool | None:
 
 def _chroma_metadata(row: dict[str, Any]) -> dict[str, str | int | float | bool]:
     metadata: dict[str, str | int | float | bool] = {}
-    for key, value in row.items():
-        if key in CHROMA_RESERVED_FIELDS:
+    source_metadata = row.get("metadata")
+    if isinstance(source_metadata, dict):
+        items = source_metadata.items()
+    else:
+        items = ((key, value) for key, value in row.items() if key not in CHROMA_RESERVED_FIELDS)
+
+    for key, value in items:
+        if not isinstance(key, str):
             continue
         chroma_value = _metadata_value(value)
         if chroma_value is not None:
@@ -120,6 +126,23 @@ def build_chroma_embedding_records(
     return records
 
 
+def embed_document_chunks(
+    chunks: list[dict[str, Any]],
+    output_path: Path,
+    *,
+    model_name: str = DEFAULT_EMBEDDING_MODEL,
+    batch_size: int = 64,
+    normalize_embeddings: bool = True,
+) -> int:
+    records = build_chroma_embedding_records(
+        chunks,
+        model_name=model_name,
+        batch_size=batch_size,
+        normalize_embeddings=normalize_embeddings,
+    )
+    return _write_jsonl(output_path, records)
+
+
 def embed_document_chunks_file(
     input_path: Path,
     output_path: Path,
@@ -129,10 +152,10 @@ def embed_document_chunks_file(
     normalize_embeddings: bool = True,
 ) -> int:
     chunks = _load_jsonl(input_path)
-    records = build_chroma_embedding_records(
+    return embed_document_chunks(
         chunks,
+        output_path,
         model_name=model_name,
         batch_size=batch_size,
         normalize_embeddings=normalize_embeddings,
     )
-    return _write_jsonl(output_path, records)

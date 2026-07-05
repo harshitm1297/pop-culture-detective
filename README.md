@@ -53,6 +53,7 @@ Project/
     retrieve.py
     retrieval_eval.py
     build_prompt.py
+    chat.py
     load_to_motherduck.py
     query_motherduck.py
     run_pipeline.py
@@ -91,7 +92,7 @@ python -m venv .venv
 
 ### 3. Install Dependencies
 
-Local ETL itself uses the Python standard library. MotherDuck publishing requires `duckdb`. RAG embeddings and retrieval require `sentence-transformers`, and local vector storage requires `chromadb`.
+Local ETL itself uses the Python standard library. MotherDuck publishing and SQL chatbot queries require `duckdb`. RAG embeddings and retrieval require `sentence-transformers`, local vector storage requires `chromadb`, and the unified chatbot uses a local HuggingFace model through `torch` and `transformers`.
 
 ```powershell
 pip install -r .\requirements.txt
@@ -121,6 +122,7 @@ ENABLE_LOCAL_SAMPLE_RETENTION=true
 LOCAL_RETAIN_MOVIE_COUNT=30
 LOCAL_RETAIN_TV_COUNT=30
 
+RAG_DATA_SOURCE=local
 LOCAL_DATA_ROOT=data
 LOG_LEVEL=INFO
 ```
@@ -180,11 +182,12 @@ Publishes a processed run into the configured `MotherDuck` database. It defaults
 
 ### `scripts/embed_document_chunks.py`
 
-Embeds processed document chunks for the local RAG layer.
+Embeds document chunks for the local RAG layer. The chunk source is controlled by `RAG_DATA_SOURCE` in `.env`.
 
 It:
 
-- reads `data/processed/<process_run_id>/document_chunks.jsonl`
+- reads local chunks from `data/processed/20260702T131134Z/document_chunks.jsonl` when `RAG_DATA_SOURCE=local`
+- reads warehouse chunks from the MotherDuck `document_chunks` table when `RAG_DATA_SOURCE=motherduck`
 - uses `SentenceTransformer("BAAI/bge-small-en-v1.5")`
 - writes `data/processed/<process_run_id>/document_chunk_embeddings.jsonl`
 - outputs ChromaDB-ready records with `id`, `document`, `metadata`, and `embedding`
@@ -236,6 +239,17 @@ It has two modes:
 
 The prompt builder outputs a system prompt, user prompt, included and excluded chunk IDs, and context size. Use `--max-context-chars` to control the context budget and `--min-similarity` to drop weak matches before prompt assembly.
 
+### `scripts/chat.py`
+
+Starts the unified chatbot that routes each question through the SQL, RAG, or hybrid pipeline.
+
+It:
+
+- uses MotherDuck SQL as the source of truth for ratings, rankings, cast, attention, and other structured facts
+- uses ChromaDB retrieval for textual evidence from `document_chunks`
+- uses compact hybrid prompts so SQL facts and RAG evidence stay separate
+- answers with the local Phi-3 HuggingFace model from `src/cultural_mood_tracker/rag/llm.py`
+
 ### `scripts/run_pipeline.py`
 
 Runs the full ETL flow end to end and is the recommended command for normal use.
@@ -269,6 +283,8 @@ python .\scripts\transform_canonical.py --source-run-id <source_run_id>
 ```powershell
 python .\scripts\embed_document_chunks.py --process-run-id <process_run_id>
 ```
+
+Set `RAG_DATA_SOURCE=local` to embed from the local processed JSONL file. Set `RAG_DATA_SOURCE=motherduck` to embed from the MotherDuck `document_chunks` table with `MOTHERDUCK_TOKEN` and `MOTHERDUCK_DATABASE`.
 
 The embedding output can be split directly into ChromaDB `ids`, `documents`, `metadatas`, and `embeddings` for collection `add` or `upsert`.
 
@@ -331,19 +347,49 @@ To keep only stronger matches and write the complete prompt payload:
 python .\scripts\build_prompt.py --query "a love story with public attention signals" --top-k 8 --min-similarity 0.3 --output-path data\eval\_scratch_prompt.json
 ```
 
-### 9. Local End-To-End Pipeline
+### 9. Start The Unified Chatbot
+
+Before starting the chatbot, make sure:
+
+- `MOTHERDUCK_TOKEN` and `MOTHERDUCK_DATABASE` are set in `.env`
+- ChromaDB has been populated under `chroma_db/`
+- `pip install -r .\requirements.txt` has completed
+
+Start an interactive session:
+
+```powershell
+python .\scripts\chat.py --top-k 8 --max-context-chars 1200
+```
+
+Then type questions directly into the prompt. Use `exit`, `quit`, or `:q` to close the session.
+
+Single-question mode:
+
+```powershell
+python .\scripts\chat.py --query "Why is Obsession popular?" --json
+```
+
+Routing behavior:
+
+- rating, ranking, cast, attention, and trend facts use MotherDuck SQL
+- descriptions, summaries, and review interpretation use RAG
+- comparison and popularity questions use hybrid SQL + RAG
+
+The first answer can take longer because the local Phi-3 model must load into memory. Later answers in the same session reuse the cached model.
+
+### 10. Local End-To-End Pipeline
 
 ```powershell
 python .\scripts\run_pipeline.py --skip-motherduck-load
 ```
 
-### 10. Publish To MotherDuck
+### 11. Publish To MotherDuck
 
 ```powershell
 python .\scripts\load_to_motherduck.py --process-run-id <process_run_id>
 ```
 
-### 11. Full ETL + MotherDuck In One Command
+### 12. Full ETL + MotherDuck In One Command
 
 ```powershell
 python .\scripts\run_pipeline.py
