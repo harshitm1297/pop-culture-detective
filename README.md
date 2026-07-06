@@ -92,7 +92,7 @@ python -m venv .venv
 
 ### 3. Install Dependencies
 
-Local ETL itself uses the Python standard library. MotherDuck publishing and SQL chatbot queries require `duckdb`. RAG embeddings and retrieval require `sentence-transformers`, local vector storage requires `chromadb`, and the unified chatbot uses a local HuggingFace model through `torch` and `transformers`.
+Local ETL itself uses the Python standard library. MotherDuck publishing and SQL chatbot queries require `duckdb`. RAG embeddings and retrieval require `sentence-transformers`, local vector storage requires `chromadb`, and the unified chatbot uses Groq-hosted `llama-3.1-8b-instant` inference through the `groq` SDK.
 
 ```powershell
 pip install -r .\requirements.txt
@@ -248,7 +248,7 @@ It:
 - uses MotherDuck SQL as the source of truth for ratings, rankings, cast, attention, and other structured facts
 - uses ChromaDB retrieval for textual evidence from `document_chunks`
 - uses compact hybrid prompts so SQL facts and RAG evidence stay separate
-- answers with the local Phi-3 HuggingFace model from `src/cultural_mood_tracker/rag/llm.py`
+- answers with the Groq `llama-3.1-8b-instant` model through `src/cultural_mood_tracker/rag/llm.py`
 
 ### `scripts/run_pipeline.py`
 
@@ -375,7 +375,7 @@ Routing behavior:
 - descriptions, summaries, and review interpretation use RAG
 - comparison and popularity questions use hybrid SQL + RAG
 
-The first answer can take longer because the local Phi-3 model must load into memory. Later answers in the same session reuse the cached model.
+Set `GROQ_API_KEY` in `.env` before starting the chatbot. Generation is handled by Groq, so no local LLM model is loaded into memory.
 
 ### 10. Local End-To-End Pipeline
 

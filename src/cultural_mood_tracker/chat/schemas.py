@@ -6,7 +6,7 @@ from typing import Any, Literal, TypedDict
 from cultural_mood_tracker.rag.retrieval import RetrievedChunk
 
 
-ChatMode = Literal["rag", "sql", "hybrid"]
+ChatMode = Literal["fast_sql", "rag", "sql", "hybrid", "recommendation"]
 
 
 class ChatResponse(TypedDict):

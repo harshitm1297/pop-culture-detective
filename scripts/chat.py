@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Natural-language question to answer. If omitted, starts an interactive chat loop.",
     )
-    parser.add_argument("--top-k", type=int, default=5, help="Number of ChromaDB chunks for RAG/hybrid mode.")
+    parser.add_argument("--top-k", type=int, default=3, help="Number of ChromaDB chunks for RAG/hybrid mode.")
     parser.add_argument(
         "--persist-dir",
         default=Path(DEFAULT_CHROMA_DB_DIR),
@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--llm-model-name",
         default=DEFAULT_MODEL,
-        help=f"Local HuggingFace instruction model. Defaults to {DEFAULT_MODEL}.",
+        help=f"Groq chat model. Defaults to {DEFAULT_MODEL}.",
     )
     parser.add_argument(
         "--max-context-chars",

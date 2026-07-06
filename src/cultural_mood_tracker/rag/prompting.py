@@ -28,8 +28,8 @@ DEFAULT_GROUNDING_REMINDER = (
 )
 
 # Character-based budget, not a real tokenizer. ~4 characters/token is a common rough heuristic
-# for English text. This is deliberately approximate for now -- Phase 4 will swap in the actual
-# tokenizer of whichever local LLM gets chosen, which is the only way to get an exact count.
+# for English text. This remains an approximate budget because hosted chat APIs do tokenization
+# server-side.
 DEFAULT_MAX_CONTEXT_CHARS = 6000
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ from .sql_schemas import normalize_sql_output
 
 
 READ_ONLY_PREFIXES = {"select", "with", "show", "describe"}
+SQL_CACHE_TTL_SECONDS = 300
 
 
 def _import_duckdb():
@@ -71,12 +73,159 @@ def _time_window(start: Any, end: Any) -> str:
     return f"{start} to {end}"
 
 
+RECOMMENDATION_THEME_ALIASES = {
+    "comfort": {"comfort", "comforting", "cozy", "heartwarming", "feel sad", "feeling sad", "sad", "hopeful"},
+    "nostalgia": {"nostalgia", "nostalgic"},
+    "anxiety": {"dark", "horror", "tense", "unsettling", "anxious"},
+    "escapism": {"escapism", "escape", "fun", "funny", "lighthearted", "uplifting", "feel happy", "feeling happy"},
+    "loneliness": {"loneliness", "lonely", "isolation", "isolated"},
+    "identity": {"identity", "emotional", "self", "coming of age"},
+}
+
+RECOMMENDATION_GENRE_ALIASES = {
+    "Comedy": {"comedy", "funny", "lighthearted", "feel good", "feel-good"},
+    "Drama": {"drama", "emotional", "heartwarming", "hopeful"},
+    "Horror": {"horror", "scary", "dark", "unsettling"},
+    "Science Fiction": {"science fiction", "sci-fi", "scifi", "nostalgic sci-fi"},
+    "Thriller": {"thriller", "tense", "dark"},
+    "Romance": {"romance", "romantic", "heartwarming"},
+}
+
+
+def _sql_literal(value: str) -> str:
+    return f"'{_escape_like(value)}'"
+
+
+def _sql_list_contains_any(column: str, values: list[str]) -> str:
+    if not values:
+        return "FALSE"
+    checks = [f"COALESCE(list_contains({column}, {_sql_literal(value)}), FALSE)" for value in values]
+    return "(" + " OR ".join(checks) + ")"
+
+
+def _recommendation_terms(query: str) -> tuple[list[str], list[str]]:
+    normalized = query.casefold()
+    themes = [
+        theme
+        for theme, aliases in RECOMMENDATION_THEME_ALIASES.items()
+        if any(alias in normalized for alias in aliases)
+    ]
+    genres = [
+        genre
+        for genre, aliases in RECOMMENDATION_GENRE_ALIASES.items()
+        if any(alias in normalized for alias in aliases)
+    ]
+    return themes, genres
+
+
+def _sentiment_tone(value: Any) -> str | None:
+    score = _float_or_none(value)
+    if score is None:
+        return None
+    if score >= 0.05:
+        return "positive"
+    if score <= -0.05:
+        return "negative"
+    return "mixed"
+
+
+def _compact_recommendation_rows(rows: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    compact_rows: list[dict[str, Any]] = []
+    for row in rows[:limit]:
+        compact = {
+            "title": row.get("title"),
+            "genres": row.get("genres") or [],
+            "source_group": row.get("source_group"),
+            "dominant_themes": row.get("dominant_themes") or [],
+            "audience_themes": row.get("audience_themes") or [],
+            "editorial_themes": row.get("editorial_themes") or [],
+            "emotional_tone": row.get("emotional_tone") or _sentiment_tone(row.get("avg_sentiment_score")),
+            "evidence_count": _int_or_none(row.get("evidence_count")),
+            "title_count": _int_or_none(row.get("title_count")),
+            "avg_sentiment_score": _float_or_none(row.get("avg_sentiment_score")),
+        }
+        compact_rows.append({key: value for key, value in compact.items() if value not in (None, [], "")})
+    return compact_rows
+
+
+def _unique_titles(titles: list[str]) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for title in titles:
+        cleaned = _cleanup_comparison_title_candidate(str(title))
+        key = cleaned.casefold()
+        if cleaned and key not in seen:
+            seen.add(key)
+            unique.append(cleaned)
+    return unique
+
+
+def _cleanup_comparison_title_candidate(value: str) -> str:
+    cleaned = " ".join(str(value).split()).strip(" .?!:;")
+    cleaned = re.sub(
+        r"\s*(?:—|-|,|\?)\s*which\s+is\b.*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"\s*(?:—|-|,|\?)\s*(?:which\s+title|which\s+movie)\b.*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"\s*\bwhich\s+is\s+more\b.*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return cleaned.strip(" .?!:;")
+
+
+def _comparison_title_candidates(query: str) -> list[str]:
+    quoted = [double or single for double, single in re.findall(r'"([^"]+)"|\'([^\']+)\'', query)]
+    candidates = [value.strip() for value in quoted if value.strip()]
+
+    patterns = (
+        r"\bcompare\s+(.+?)\s+(?:and|vs|versus|or)\s+(.+?)(?:\?|$)",
+        r"\b(.+?)\s+(?:vs|versus)\s+(.+?)(?:\?|$)",
+        r":\s*(.+?)\s+or\s+(.+?)(?:\?|$)",
+        r"\bdo\s+(.+?)\s+and\s+(.+?)\s+have\b",
+        r"\bdoes\s+(.+?)\s+feel\s+.+?\s+than\s+(.+?)(?:\?|$)",
+        r"\b(?:between|of)\s+(.+?)\s+and\s+(.+?)(?:\?|$)",
+        r"\b(.+?)\s+or\s+(.+?)(?:\?|$)",
+    )
+    leading_noise = re.compile(
+        r"^(?:which\s+(?:is|movie|title)\s+.*?|do|does|is|are|movie|show|title)\s+",
+        flags=re.IGNORECASE,
+    )
+    topic_noise = re.compile(
+        r"^(?:audience\s+(?:mood\s+in|reception\s+of)|reception\s+of|mood\s+in)\s+",
+        flags=re.IGNORECASE,
+    )
+    for pattern in patterns:
+        match = re.search(pattern, query, flags=re.IGNORECASE)
+        if not match:
+            continue
+        for group in match.groups():
+            candidate = leading_noise.sub("", group).strip(" .?!:;")
+            if ":" in candidate:
+                candidate = candidate.rsplit(":", 1)[-1].strip(" .?!:;")
+            candidate = topic_noise.sub("", candidate).strip(" .?!:;")
+            candidate = _cleanup_comparison_title_candidate(candidate)
+            if candidate:
+                candidates.append(candidate)
+    return _unique_titles(candidates)
+
+
 class MotherDuckClient:
     def __init__(self, *, database: str | None = None, token: str | None = None) -> None:
         load_project_environment(Path.cwd())
         self.database = database or os.getenv("MOTHERDUCK_DATABASE", "cultural_mood_tracker").strip()
         self.token = token or os.getenv("MOTHERDUCK_TOKEN", "").strip()
         self._connection = None
+        self._query_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
     def connect(self):
         if self._connection is not None:
@@ -100,8 +249,14 @@ class MotherDuckClient:
 
     def _query_rows(self, sql: str) -> list[dict[str, Any]]:
         read_only_sql = _ensure_read_only_sql(sql)
+        cached = self._query_cache.get(read_only_sql)
+        now = time.monotonic()
+        if cached and now - cached[0] <= SQL_CACHE_TTL_SECONDS:
+            return [dict(row) for row in cached[1]]
         cursor = self.connect().execute(read_only_sql)
-        return _rows_from_cursor(cursor)
+        rows = _rows_from_cursor(cursor)
+        self._query_cache[read_only_sql] = (now, rows)
+        return [dict(row) for row in rows]
 
     def table_exists(self, table_name: str) -> bool:
         safe_name = table_name.replace("'", "''")
@@ -261,6 +416,35 @@ class MotherDuckClient:
             summary_metrics=result,
         )
 
+    def get_title_theme_profile(self, title: str) -> dict[str, Any]:
+        rows = self._query_rows(
+            f"""
+            WITH matched_titles AS (
+                SELECT title_id, title_name, COALESCE(genres, imdb_genres, tvmaze_genres) AS genres
+                FROM titles
+                WHERE {_title_filter(title)}
+                ORDER BY CASE WHEN lower(title_name) = lower('{_escape_like(title)}') THEN 0 ELSE 1 END, title_name
+                LIMIT 1
+            )
+            SELECT
+                mt.title_name AS title,
+                mt.genres,
+                s.dominant_themes,
+                s.chunk_count AS evidence_count,
+                s.avg_sentiment_score,
+                CASE
+                    WHEN s.avg_sentiment_score >= 0.05 THEN 'positive'
+                    WHEN s.avg_sentiment_score <= -0.05 THEN 'negative'
+                    ELSE 'mixed'
+                END AS emotional_tone
+            FROM matched_titles mt
+            LEFT JOIN title_theme_summary s USING (title_id)
+            LIMIT 1
+            """
+        )
+        compact = _compact_recommendation_rows(rows, limit=1)
+        return compact[0] if compact else {"title": title}
+
     def get_top_rated_titles(self, limit: int = 10) -> dict[str, Any]:
         rows = self._query_rows(
             f"""
@@ -394,6 +578,336 @@ class MotherDuckClient:
             },
         )
 
+    def get_title_metrics(self, title: str) -> dict[str, Any]:
+        rows = self._query_rows(
+            f"""
+            WITH matched_titles AS (
+                SELECT title_id, title_name
+                FROM titles
+                WHERE {_title_filter(title)}
+                ORDER BY CASE WHEN lower(title_name) = lower('{_escape_like(title)}') THEN 0 ELSE 1 END, title_name
+                LIMIT 1
+            ),
+            rating_metrics AS (
+                SELECT
+                    mt.title_id,
+                    mt.title_name AS title,
+                    AVG(TRY_CAST(r.rating_value AS DOUBLE)) AS avg_rating,
+                    AVG(CASE WHEN lower(r.source_name) = 'imdb' THEN TRY_CAST(r.rating_value AS DOUBLE) END) AS imdb_rating,
+                    AVG(CASE WHEN lower(r.source_name) = 'tmdb' THEN TRY_CAST(r.rating_value AS DOUBLE) END) AS tmdb_rating,
+                    SUM(TRY_CAST(r.rating_count AS BIGINT)) AS rating_count
+                FROM matched_titles mt
+                LEFT JOIN ratings r USING (title_id)
+                WHERE r.rating_scope = 'title_aggregate'
+                GROUP BY mt.title_id, mt.title_name
+            ),
+            attention_ranked AS (
+                SELECT
+                    a.title_id,
+                    AVG(TRY_CAST(a.signal_value AS DOUBLE)) AS attention_score,
+                    RANK() OVER (ORDER BY AVG(TRY_CAST(a.signal_value AS DOUBLE)) DESC) AS attention_rank,
+                    COUNT(*) OVER () AS ranked_title_count
+                FROM attention_signals a
+                GROUP BY a.title_id
+            )
+            SELECT
+                COALESCE(MAX(rm.title), '{_escape_like(title)}') AS title,
+                AVG(rm.avg_rating) AS avg_rating,
+                AVG(rm.imdb_rating) AS imdb_rating,
+                AVG(rm.tmdb_rating) AS tmdb_rating,
+                SUM(rm.rating_count) AS rating_count,
+                AVG(ar.attention_score) AS attention_score,
+                MIN(ar.attention_rank) AS attention_rank,
+                MAX(ar.ranked_title_count) AS ranked_title_count
+            FROM rating_metrics rm
+            LEFT JOIN attention_ranked ar USING (title_id)
+            """
+        )
+        row = rows[0] if rows else {}
+        return {
+            "title": str(row.get("title") or title),
+            "avg_rating": _float_or_none(row.get("avg_rating")),
+            "rating_count": _int_or_none(row.get("rating_count")),
+            "imdb_rating": _float_or_none(row.get("imdb_rating")),
+            "tmdb_rating": _float_or_none(row.get("tmdb_rating")),
+            "attention_score": _float_or_none(row.get("attention_score")),
+            "attention_rank": _int_or_none(row.get("attention_rank")),
+            "ranked_title_count": _int_or_none(row.get("ranked_title_count")),
+        }
+
+    def get_attention_vs_reception(self, title: str) -> dict[str, Any]:
+        rows = self._query_rows(
+            f"""
+            WITH ranked AS (
+                SELECT
+                    t.title_id,
+                    t.title_name AS title,
+                    avr.avg_rating_value,
+                    avr.attention_total,
+                    avr.attention_peak,
+                    avr.avg_sentiment_score,
+                    avr.dominant_themes,
+                    avr.chunk_count,
+                    CUME_DIST() OVER (ORDER BY avr.attention_total) AS attention_percentile
+                FROM attention_vs_reception avr
+                JOIN titles t USING (title_id)
+                WHERE avr.attention_total IS NOT NULL
+            )
+            SELECT *
+            FROM ranked
+            WHERE {_title_filter(title, "title")}
+            ORDER BY CASE WHEN lower(title) = lower('{_escape_like(title)}') THEN 0 ELSE 1 END, title
+            LIMIT 1
+            """
+        )
+        row = rows[0] if rows else {}
+        title_name = str(row.get("title") or title)
+        sentiment = _float_or_none(row.get("avg_sentiment_score"))
+        reception_summary = None
+        if row:
+            reception_summary = (
+                f"{title_name} has attention_total={_float_or_none(row.get('attention_total'))}, "
+                f"avg_rating={_float_or_none(row.get('avg_rating_value'))}, "
+                f"avg_sentiment={sentiment}, and themes={row.get('dominant_themes') or []}."
+            )
+        return {
+            "title": title_name,
+            "attention_score": _float_or_none(row.get("attention_total")),
+            "attention_peak": _float_or_none(row.get("attention_peak")),
+            "attention_percentile": _float_or_none(row.get("attention_percentile")),
+            "avg_rating": _float_or_none(row.get("avg_rating_value")),
+            "rating_count": _int_or_none(row.get("chunk_count")),
+            "avg_sentiment_score": sentiment,
+            "dominant_themes": row.get("dominant_themes") or [],
+            "reception_summary": reception_summary,
+        }
+
+    def get_title_analytical_summaries(self, title: str) -> dict[str, Any]:
+        theme = self.get_title_theme_profile(title)
+        audience_rows = self._query_rows(
+            f"""
+            WITH matched_titles AS (
+                SELECT title_id, title_name
+                FROM titles
+                WHERE {_title_filter(title)}
+                ORDER BY CASE WHEN lower(title_name) = lower('{_escape_like(title)}') THEN 0 ELSE 1 END, title_name
+                LIMIT 1
+            )
+            SELECT
+                mt.title_name AS title,
+                s.source_group,
+                s.chunk_count AS evidence_count,
+                s.dominant_themes,
+                s.avg_sentiment_score,
+                CASE
+                    WHEN s.avg_sentiment_score >= 0.05 THEN 'positive'
+                    WHEN s.avg_sentiment_score <= -0.05 THEN 'negative'
+                    ELSE 'mixed'
+                END AS emotional_tone
+            FROM matched_titles mt
+            JOIN audience_vs_editorial_summary s USING (title_id)
+            WHERE s.source_group IN ('audience', 'editorial')
+            ORDER BY s.source_group
+            LIMIT 4
+            """
+        )
+        attention_reception = self.get_attention_vs_reception(title)
+        return {
+            "title": theme.get("title") or attention_reception.get("title") or title,
+            "title_theme_summary": theme,
+            "audience_vs_editorial_summary": _compact_recommendation_rows(audience_rows, limit=4),
+            "attention_vs_reception": attention_reception,
+        }
+
+    def compare_titles(self, title_a: str, title_b: str) -> dict[str, Any]:
+        results = []
+        for title in (title_a, title_b):
+            metrics = self.get_title_metrics(title)
+            analytics = self.get_title_analytical_summaries(title)
+            results.append(
+                {
+                    "title": metrics.get("title") or title,
+                    "metrics": metrics,
+                    "analytics": analytics,
+                }
+            )
+        return {
+            "query_type": "comparison",
+            "title": None,
+            "results": results,
+            "summary_metrics": {"titles": [title_a, title_b], "result_count": len(results)},
+        }
+
+    def get_title_theme_summary(self, query: str, *, limit: int = 8) -> list[dict[str, Any]]:
+        themes, genres = _recommendation_terms(query)
+        theme_match = _sql_list_contains_any("s.dominant_themes", themes)
+        genre_match = _sql_list_contains_any("COALESCE(t.genres, t.imdb_genres, t.tvmaze_genres)", genres)
+        where_clause = f"WHERE {theme_match} OR {genre_match}" if themes or genres else ""
+        rows = self._query_rows(
+            f"""
+            SELECT
+                t.title_name AS title,
+                COALESCE(t.genres, t.imdb_genres, t.tvmaze_genres) AS genres,
+                s.dominant_themes,
+                s.chunk_count AS evidence_count,
+                s.avg_sentiment_score,
+                CASE
+                    WHEN s.avg_sentiment_score >= 0.05 THEN 'positive'
+                    WHEN s.avg_sentiment_score <= -0.05 THEN 'negative'
+                    ELSE 'mixed'
+                END AS emotional_tone,
+                (
+                    CASE WHEN {theme_match} THEN 2 ELSE 0 END
+                    + CASE WHEN {genre_match} THEN 1 ELSE 0 END
+                    + COALESCE(s.chunk_count, 0) / 1000.0
+                ) AS recommendation_score
+            FROM title_theme_summary s
+            JOIN titles t USING (title_id)
+            {where_clause}
+            ORDER BY recommendation_score DESC, s.chunk_count DESC NULLS LAST, t.title_name
+            LIMIT {int(limit)}
+            """
+        )
+        return _compact_recommendation_rows(rows, limit=limit)
+
+    def get_genre_theme_summary(self, query: str, *, limit: int = 6) -> list[dict[str, Any]]:
+        themes, genres = _recommendation_terms(query)
+        theme_match = _sql_list_contains_any("dominant_themes", themes)
+        genre_checks = [f"genre ILIKE '%{_escape_like(genre)}%'" for genre in genres]
+        genre_match = "(" + " OR ".join(genre_checks) + ")" if genre_checks else "FALSE"
+        where_clause = f"WHERE {theme_match} OR {genre_match}" if themes or genres else ""
+        rows = self._query_rows(
+            f"""
+            SELECT
+                genre,
+                title_count,
+                dominant_themes,
+                avg_sentiment_score,
+                CASE
+                    WHEN avg_sentiment_score >= 0.05 THEN 'positive'
+                    WHEN avg_sentiment_score <= -0.05 THEN 'negative'
+                    ELSE 'mixed'
+                END AS emotional_tone,
+                (
+                    CASE WHEN {theme_match} THEN 2 ELSE 0 END
+                    + CASE WHEN {genre_match} THEN 1 ELSE 0 END
+                    + COALESCE(title_count, 0) / 1000.0
+                ) AS recommendation_score
+            FROM genre_theme_summary
+            {where_clause}
+            ORDER BY recommendation_score DESC, title_count DESC NULLS LAST, genre
+            LIMIT {int(limit)}
+            """
+        )
+        compact_rows: list[dict[str, Any]] = []
+        for row in rows[:limit]:
+            compact_rows.append(
+                {
+                    key: value
+                    for key, value in {
+                        "genre": row.get("genre"),
+                        "title_count": _int_or_none(row.get("title_count")),
+                        "dominant_themes": row.get("dominant_themes") or [],
+                        "emotional_tone": row.get("emotional_tone") or _sentiment_tone(row.get("avg_sentiment_score")),
+                        "avg_sentiment_score": _float_or_none(row.get("avg_sentiment_score")),
+                    }.items()
+                    if value not in (None, [], "")
+                }
+            )
+        return compact_rows
+
+    def get_audience_editorial_summary(self, query: str, *, limit: int = 8) -> list[dict[str, Any]]:
+        themes, genres = _recommendation_terms(query)
+        theme_match = _sql_list_contains_any("s.dominant_themes", themes)
+        genre_match = _sql_list_contains_any("COALESCE(t.genres, t.imdb_genres, t.tvmaze_genres)", genres)
+        where_clause = f"WHERE s.source_group IN ('audience', 'editorial') AND ({theme_match} OR {genre_match})"
+        if not themes and not genres:
+            where_clause = "WHERE s.source_group IN ('audience', 'editorial')"
+        rows = self._query_rows(
+            f"""
+            SELECT
+                t.title_name AS title,
+                COALESCE(t.genres, t.imdb_genres, t.tvmaze_genres) AS genres,
+                any_value(CASE WHEN s.source_group = 'audience' THEN s.dominant_themes END) AS audience_themes,
+                any_value(CASE WHEN s.source_group = 'editorial' THEN s.dominant_themes END) AS editorial_themes,
+                SUM(COALESCE(s.chunk_count, 0)) AS evidence_count,
+                AVG(s.avg_sentiment_score) AS avg_sentiment_score,
+                CASE
+                    WHEN AVG(s.avg_sentiment_score) >= 0.05 THEN 'positive'
+                    WHEN AVG(s.avg_sentiment_score) <= -0.05 THEN 'negative'
+                    ELSE 'mixed'
+                END AS emotional_tone,
+                (
+                    MAX(CASE WHEN {theme_match} THEN 2 ELSE 0 END)
+                    + MAX(CASE WHEN {genre_match} THEN 1 ELSE 0 END)
+                    + SUM(COALESCE(s.chunk_count, 0)) / 1000.0
+                ) AS recommendation_score
+            FROM audience_vs_editorial_summary s
+            JOIN titles t USING (title_id)
+            {where_clause}
+            GROUP BY t.title_id, t.title_name, COALESCE(t.genres, t.imdb_genres, t.tvmaze_genres)
+            ORDER BY recommendation_score DESC, evidence_count DESC NULLS LAST, t.title_name
+            LIMIT {int(limit)}
+            """
+        )
+        return _compact_recommendation_rows(rows, limit=limit)
+
+    def extract_titles(self, query: str, *, limit: int = 4) -> list[str]:
+        if not isinstance(query, str) or not query.strip():
+            return []
+
+        titles: list[str] = []
+        for candidate in _comparison_title_candidates(query):
+            resolved = self._resolve_title_candidate(candidate)
+            titles.append(resolved or candidate)
+            if len(_unique_titles(titles)) >= limit:
+                break
+        titles = _unique_titles(titles)
+        if len(titles) >= 2:
+            return titles[:limit]
+
+        rows = self._query_rows(
+            f"""
+            SELECT DISTINCT title_name AS title
+            FROM titles
+            WHERE title_name IS NOT NULL
+              AND strpos(lower({_sql_literal(query)}), lower(title_name)) > 0
+            ORDER BY length(title_name) DESC, title_name
+            LIMIT {int(limit)}
+            """
+        )
+        exact_titles = _unique_titles([str(row.get("title")) for row in rows if row.get("title")])
+        return _unique_titles(titles + exact_titles)[:limit]
+
+    def _resolve_title_candidate(self, candidate: str) -> str | None:
+        cleaned = " ".join(candidate.split()).strip(" .?!:;")
+        if not cleaned:
+            return None
+        rows = self._query_rows(
+            f"""
+            SELECT title_name AS title
+            FROM titles
+            WHERE lower(title_name) = lower('{_escape_like(cleaned)}')
+               OR lower(normalized_title) = lower('{_escape_like(cleaned)}')
+               OR title_name ILIKE '%{_escape_like(cleaned)}%' ESCAPE '\\'
+               OR normalized_title ILIKE '%{_escape_like(cleaned)}%' ESCAPE '\\'
+            ORDER BY
+                CASE
+                    WHEN lower(title_name) = lower('{_escape_like(cleaned)}') THEN 0
+                    WHEN lower(normalized_title) = lower('{_escape_like(cleaned)}') THEN 1
+                    WHEN title_name ILIKE '{_escape_like(cleaned)}%' ESCAPE '\\' THEN 2
+                    ELSE 3
+                END,
+                length(title_name),
+                title_name
+            LIMIT 1
+            """
+        )
+        if not rows:
+            return None
+        title = rows[0].get("title")
+        return str(title) if title else None
+
     def run_structured_query(self, user_query: str) -> dict[str, Any]:
         title_a, title_b = extract_comparison_titles(user_query)
         if title_a and title_b:
@@ -421,14 +935,14 @@ def extract_comparison_titles(query: str) -> tuple[str | None, str | None]:
     quoted = [double or single for double, single in re.findall(r'"([^"]+)"|\'([^\']+)\'', query)]
     quoted = [value.strip() for value in quoted if value.strip()]
     if len(quoted) >= 2:
-        return quoted[0], quoted[1]
+        return _cleanup_comparison_title_candidate(quoted[0]), _cleanup_comparison_title_candidate(quoted[1])
 
     match = re.search(r"\bcompare\s+(.+?)\s+(?:and|vs|versus)\s+(.+?)(?:\?|$)", query, flags=re.IGNORECASE)
     if match:
-        return match.group(1).strip(" .?!"), match.group(2).strip(" .?!")
+        return _cleanup_comparison_title_candidate(match.group(1)), _cleanup_comparison_title_candidate(match.group(2))
     match = re.search(r"\b(.+?)\s+(?:vs|versus)\s+(.+?)(?:\?|$)", query, flags=re.IGNORECASE)
     if match:
-        return match.group(1).strip(" .?!"), match.group(2).strip(" .?!")
+        return _cleanup_comparison_title_candidate(match.group(1)), _cleanup_comparison_title_candidate(match.group(2))
     return None, None
 
 
@@ -470,3 +984,11 @@ def extract_title(query: str) -> str | None:
         if cleaned:
             return cleaned
     return None
+
+
+def extract_titles(query: str) -> list[str]:
+    client = MotherDuckClient()
+    try:
+        return client.extract_titles(query)
+    finally:
+        client.close()

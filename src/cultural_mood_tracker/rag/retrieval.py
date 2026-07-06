@@ -18,6 +18,8 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
 
 _MODEL_CACHE: dict[str, Any] = {}
+_EMBEDDING_CACHE: dict[tuple[str, str, str, bool], list[float]] = {}
+_RETRIEVAL_CACHE: dict[tuple[str, str, str, int, str, bool], list["RetrievedChunk"]] = {}
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,10 @@ def embed_query(
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query must be a non-empty string")
 
+    cache_key = (query.strip(), model_name, query_instruction, normalize_embeddings)
+    if cache_key in _EMBEDDING_CACHE:
+        return list(_EMBEDDING_CACHE[cache_key])
+
     model = _load_model(model_name)
     text = f"{query_instruction}{query.strip()}" if query_instruction else query.strip()
     embedding = model.encode(
@@ -74,7 +80,9 @@ def embed_query(
         normalize_embeddings=normalize_embeddings,
         show_progress_bar=False,
     )[0]
-    return embedding.tolist()
+    embedding_list = embedding.tolist()
+    _EMBEDDING_CACHE[cache_key] = embedding_list
+    return list(embedding_list)
 
 
 def open_collection(persist_dir: Path, collection_name: str) -> Any:
@@ -122,6 +130,20 @@ def query_collection(
     if top_k < 1:
         raise ValueError("top_k must be at least 1")
 
+    where_key = repr(sorted((where or {}).items()))
+    retrieval_cache_key = (
+        query.strip(),
+        str(persist_dir),
+        collection_name,
+        model_name,
+        top_k,
+        where_key,
+        normalize_embeddings,
+    )
+    if collection is None and retrieval_cache_key in _RETRIEVAL_CACHE:
+        LOGGER.info("Retrieved %s cached chunk(s) for query", len(_RETRIEVAL_CACHE[retrieval_cache_key]))
+        return list(_RETRIEVAL_CACHE[retrieval_cache_key])
+
     if collection is None:
         collection = open_collection(persist_dir, collection_name)
     query_embedding = embed_query(
@@ -155,4 +177,6 @@ def query_collection(
         )
 
     LOGGER.info("Retrieved %s chunk(s) for query from %s/%s", len(chunks), persist_dir, collection_name)
+    if collection is None:
+        _RETRIEVAL_CACHE[retrieval_cache_key] = chunks
     return chunks
