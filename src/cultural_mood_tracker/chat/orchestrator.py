@@ -10,7 +10,7 @@ from cultural_mood_tracker.rag.chroma_ingest import DEFAULT_CHROMA_COLLECTION, D
 from cultural_mood_tracker.rag.embeddings import DEFAULT_EMBEDDING_MODEL
 from cultural_mood_tracker.rag.llm import DEFAULT_MODEL, generate_answer
 from cultural_mood_tracker.rag.prompting import DEFAULT_MAX_CONTEXT_CHARS, PromptResult, build_prompt
-from cultural_mood_tracker.rag.retrieval import RetrievedChunk, query_collection
+from cultural_mood_tracker.rag.retrieval import RetrievedChunk, open_collection, query_collection
 
 from .router import route_query
 from .schemas import ChatMode, ChatResponse, OrchestratorResult
@@ -47,9 +47,16 @@ RECO_TITLE_LIMIT = 3
 RECO_GENRE_LIMIT = 2
 RECO_AUDIENCE_LIMIT = 3
 RECO_MAX_PROMPT_TOKENS = 1200
-FAST_HYBRID_MAX_NEW_TOKENS = 220
-RAG_MAX_NEW_TOKENS = 260
-RECOMMENDATION_MAX_NEW_TOKENS = 384
+# These were previously 220/260/384 -- too tight for the structured, multi-section answers the
+# prompts actually request (see _build_hybrid_analytics_prompt's 3-section format and the
+# recommendation prompt's 3-titles-with-4-fields-each format). Groq's max_tokens is a hard cutoff,
+# not a graceful latency control, so an undersized budget produces answers truncated mid-sentence
+# rather than shorter-but-complete ones. rag/llm.py now logs a WARNING with finish_reason="length"
+# whenever a response is actually truncated -- watch for that log line if these ever need raising
+# again for a new prompt shape.
+FAST_HYBRID_MAX_NEW_TOKENS = 550
+RAG_MAX_NEW_TOKENS = 450
+RECOMMENDATION_MAX_NEW_TOKENS = 600
 HybridQueryType = Literal[
     "POPULARITY_EXPLANATION",
     "ATTENTION_VS_RECEPTION",
@@ -78,6 +85,11 @@ class ChatOrchestrator:
         self.top_k = top_k
         self.max_context_chars = max_context_chars
         self.sql_client = sql_client or MotherDuckClient()
+        # Opened lazily on first RAG/hybrid call (not here) so that sql-only usage never requires
+        # chroma_db/ to exist, then cached on the instance so long-lived callers (e.g. a Streamlit
+        # app holding one ChatOrchestrator via st.cache_resource) don't reopen a PersistentClient
+        # on every single question.
+        self._chroma_collection: Any | None = None
 
     def answer(self, query: str) -> OrchestratorResult:
         started_at = time.perf_counter()
@@ -97,12 +109,13 @@ class ChatOrchestrator:
             LOGGER.info("total_latency=%.3fs", time.perf_counter() - started_at)
 
     def _retrieve(self, query: str, *, top_k: int | None = None) -> list[RetrievedChunk]:
+        if self._chroma_collection is None:
+            self._chroma_collection = open_collection(self.persist_dir, self.collection_name)
         return query_collection(
             query,
-            persist_dir=self.persist_dir,
-            collection_name=self.collection_name,
             model_name=self.embedding_model_name,
             top_k=top_k or self.top_k,
+            collection=self._chroma_collection,
         )
 
     def _answer_rag(self, query: str) -> OrchestratorResult:

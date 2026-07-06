@@ -22,3 +22,5 @@ data/reports/*
 !data/warehouse/.gitkeep
 !data/logs/.gitkeep
 !data/reports/.gitkeep
+
+docs/

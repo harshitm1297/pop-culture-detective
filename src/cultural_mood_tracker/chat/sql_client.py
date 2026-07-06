@@ -226,6 +226,16 @@ class MotherDuckClient:
         self.token = token or os.getenv("MOTHERDUCK_TOKEN", "").strip()
         self._connection = None
         self._query_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+        # Rolling log of executed SQL text, purely for UI/debugging visibility (e.g. an "SQL used
+        # for this answer" panel). Does not affect query behavior; callers that don't care about
+        # it can ignore these entirely.
+        self._last_queries: list[str] = []
+
+    def get_last_queries(self) -> list[str]:
+        return list(self._last_queries)
+
+    def clear_last_queries(self) -> None:
+        self._last_queries = []
 
     def connect(self):
         if self._connection is not None:
@@ -249,6 +259,7 @@ class MotherDuckClient:
 
     def _query_rows(self, sql: str) -> list[dict[str, Any]]:
         read_only_sql = _ensure_read_only_sql(sql)
+        self._last_queries.append(read_only_sql)
         cached = self._query_cache.get(read_only_sql)
         now = time.monotonic()
         if cached and now - cached[0] <= SQL_CACHE_TTL_SECONDS:

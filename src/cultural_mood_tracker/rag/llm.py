@@ -40,17 +40,22 @@ class GroqLLM:
         model_name: str = DEFAULT_MODEL,
         max_tokens: int = DEFAULT_MAX_NEW_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
-    ) -> str:
+    ) -> tuple[str, str | None]:
         response = self.client.chat.completions.create(
             model=model_name,
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
         )
-        content = response.choices[0].message.content
+        choice = response.choices[0]
+        content = choice.message.content
         if not isinstance(content, str) or not content.strip():
             raise RuntimeError("Groq returned an empty response.")
-        return content.strip()
+        # finish_reason == "length" means Groq stopped because max_tokens was hit mid-generation,
+        # not because the model naturally finished ("stop"). This is the only way to distinguish
+        # "the answer is complete" from "the answer was cut off" -- the text alone can't tell you.
+        finish_reason = getattr(choice, "finish_reason", None)
+        return content.strip(), finish_reason
 
 
 def _validate_messages(messages: Any) -> list[dict[str, str]]:
@@ -101,7 +106,7 @@ def generate_answer(
 
     started_at = time.perf_counter()
     try:
-        answer = client.generate(
+        answer, finish_reason = client.generate(
             messages,
             model_name=model_name,
             max_tokens=max_new_tokens,
@@ -111,9 +116,16 @@ def generate_answer(
         raise RuntimeError(f"Groq generation failed for model {model_name!r}: {exc}") from exc
 
     LOGGER.info(
-        "Generation complete with Groq model %s in %.2fs; max_tokens=%s",
+        "Generation complete with Groq model %s in %.2fs; max_tokens=%s; finish_reason=%s",
         model_name,
         time.perf_counter() - started_at,
         max_new_tokens,
+        finish_reason,
     )
+    if finish_reason == "length":
+        LOGGER.warning(
+            "Groq response was TRUNCATED: max_tokens=%s was reached before the model finished. "
+            "The answer is likely cut off mid-sentence. Raise max_new_tokens for this call site.",
+            max_new_tokens,
+        )
     return answer.rstrip()

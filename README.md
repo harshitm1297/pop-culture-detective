@@ -377,6 +377,16 @@ Routing behavior:
 
 Set `GROQ_API_KEY` in `.env` before starting the chatbot. Generation is handled by Groq, so no local LLM model is loaded into memory.
 
+### 10. Start The Streamlit Chat UI
+
+A web chat frontend (`app.py`) is available on top of the same orchestrator used by `scripts/chat.py`. It requires the same environment setup (`MOTHERDUCK_TOKEN`, `MOTHERDUCK_DATABASE`, `GROQ_API_KEY`, a populated `chroma_db/`).
+
+```powershell
+streamlit run app.py
+```
+
+It shows the retrieval mode (SQL / RAG / hybrid / recommendation), response time, the SQL statements used, and retrieved RAG chunks for each answer, and keeps chat history in the browser session. The terminal chatbot (`scripts/chat.py`) is unaffected and continues to work exactly as before.
+
 ### 10. Local End-To-End Pipeline
 
 ```powershell
