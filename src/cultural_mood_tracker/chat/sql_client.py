@@ -133,6 +133,7 @@ def _compact_recommendation_rows(rows: list[dict[str, Any]], *, limit: int) -> l
     compact_rows: list[dict[str, Any]] = []
     for row in rows[:limit]:
         compact = {
+            "title_id": row.get("title_id"),
             "title": row.get("title"),
             "genres": row.get("genres") or [],
             "source_group": row.get("source_group"),
@@ -757,6 +758,7 @@ class MotherDuckClient:
         rows = self._query_rows(
             f"""
             SELECT
+                t.title_id,
                 t.title_name AS title,
                 COALESCE(t.genres, t.imdb_genres, t.tvmaze_genres) AS genres,
                 s.dominant_themes,
@@ -837,6 +839,7 @@ class MotherDuckClient:
         rows = self._query_rows(
             f"""
             SELECT
+                t.title_id,
                 t.title_name AS title,
                 COALESCE(t.genres, t.imdb_genres, t.tvmaze_genres) AS genres,
                 any_value(CASE WHEN s.source_group = 'audience' THEN s.dominant_themes END) AS audience_themes,

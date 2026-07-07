@@ -36,9 +36,9 @@ SQL_SYSTEM_PROMPT = (
 
 RECOMMENDATION_SYSTEM_PROMPT = (
     "You are an evidence-grounded movie and TV recommendation assistant. "
-    "Recommend only using the retrieved summaries. Do not invent information. "
-    "Explain why each recommendation matches the requested mood. Mention the supporting "
-    "evidence. If the evidence is weak, explicitly say so."
+    "Recommend only using the retrieved summaries and review excerpts. Do not invent information. "
+    "Explain why each recommendation matches the requested mood. Use review evidence to make "
+    "each recommendation distinctive. If the evidence is weak, explicitly say so."
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -47,6 +47,7 @@ RECO_TITLE_LIMIT = 3
 RECO_GENRE_LIMIT = 2
 RECO_AUDIENCE_LIMIT = 3
 RECO_MAX_PROMPT_TOKENS = 1200
+RECO_REVIEW_SNIPPET_CHARS = 160
 # These were previously 220/260/384 -- too tight for the structured, multi-section answers the
 # prompts actually request (see _build_hybrid_analytics_prompt's 3-section format and the
 # recommendation prompt's 3-titles-with-4-fields-each format). Groq's max_tokens is a hard cutoff,
@@ -312,9 +313,11 @@ class ChatOrchestrator:
 
     def answer_recommendation(self, query: str) -> OrchestratorResult:
         LOGGER.info("recommendation_mode=true")
+        sql_started_at = time.perf_counter()
         title_theme_rows = self.sql_client.get_title_theme_summary(query, limit=RECO_TITLE_LIMIT)
         genre_theme_rows = self.sql_client.get_genre_theme_summary(query, limit=RECO_GENRE_LIMIT)
         audience_editorial_rows = self.sql_client.get_audience_editorial_summary(query, limit=RECO_AUDIENCE_LIMIT)
+        LOGGER.info("sql_candidates_latency=%.3fs", time.perf_counter() - sql_started_at)
         LOGGER.info("title_theme_rows=%s", len(title_theme_rows))
         LOGGER.info("genre_theme_rows=%s", len(genre_theme_rows))
         LOGGER.info("audience_editorial_rows=%s", len(audience_editorial_rows))
@@ -331,6 +334,12 @@ class ChatOrchestrator:
             candidate["avg_rating"] = metrics.get("avg_rating")
             candidate["attention_score"] = metrics.get("attention_score")
         candidates = rank_recommendation_candidates(candidates)[:RECO_TITLE_LIMIT]
+        LOGGER.info("recommendation_candidates=%s", len(candidates))
+
+        review_started_at = time.perf_counter()
+        review_chunks = self._review_chunks_for_recommendation_candidates(candidates)
+        LOGGER.info("review_retrieval_latency=%.3fs", time.perf_counter() - review_started_at)
+        LOGGER.info("review_chunks_added=%s", len(review_chunks))
 
         fallback_chunks: list[RetrievedChunk] = []
         if not (candidates or genre_theme_rows):
@@ -350,12 +359,47 @@ class ChatOrchestrator:
             answer=answer,
             mode="recommendation",
             used_sql=True,
-            retrieved_chunks=fallback_chunks,
+            retrieved_chunks=review_chunks + fallback_chunks,
             sql_results={
                 "recommendation_candidates": candidates,
                 "genre_theme_summary": genre_theme_rows,
             },
         )
+
+    def _review_chunks_for_recommendation_candidates(self, candidates: list[dict[str, Any]]) -> list[RetrievedChunk]:
+        chunks: list[RetrievedChunk] = []
+        for candidate in candidates[:RECO_TITLE_LIMIT]:
+            chunk = self._representative_review_chunk_for_title(candidate.get("title_id"), candidate.get("title"))
+            if chunk is None:
+                continue
+            candidate["review_excerpt"] = _shorten_text(chunk.chunk_text, RECO_REVIEW_SNIPPET_CHARS)
+            metadata = chunk.metadata
+            source = metadata.get("source_name") or metadata.get("document_type") or metadata.get("chunk_source_type")
+            if source:
+                candidate["review_source"] = source
+            chunks.append(chunk)
+        return chunks
+
+    def _representative_review_chunk_for_title(self, title_id: Any, title: Any) -> RetrievedChunk | None:
+        if not title_id and not title:
+            return None
+        if self._chroma_collection is None:
+            self._chroma_collection = open_collection(self.persist_dir, self.collection_name)
+
+        for where in _title_chunk_filters(title_id=title_id, title=title):
+            try:
+                result = self._chroma_collection.get(
+                    where=where,
+                    limit=12,
+                    include=["documents", "metadatas"],
+                )
+            except Exception as exc:
+                LOGGER.debug("recommendation_review_lookup_failed title=%s where=%s error=%s", title, where, exc)
+                continue
+            chunk = _select_representative_review_chunk(result)
+            if chunk is not None:
+                return chunk
+        return None
 
     def _generate(self, prompt: PromptResult, *, max_new_tokens: int) -> str:
         llm_started_at = time.perf_counter()
@@ -683,6 +727,7 @@ def _merge_recommendation_candidates(
         key = str(title).casefold()
         candidate = by_title.setdefault(key, {"title": title})
         for field in (
+            "title_id",
             "genres",
             "dominant_themes",
             "audience_themes",
@@ -705,6 +750,22 @@ def _compact_theme_list(values: Any, *, limit: int = 3) -> str:
     if not isinstance(values, list) or not values:
         return "[]"
     return "[" + ", ".join(str(value) for value in values[:limit]) + "]"
+
+
+def _compact_genre_list(values: Any, *, limit: int = 2) -> str | None:
+    if isinstance(values, str):
+        cleaned = values.strip()
+        return cleaned if cleaned else None
+    if not isinstance(values, list) or not values:
+        return None
+    return "[" + ", ".join(str(value) for value in values[:limit]) + "]"
+
+
+def _shorten_text(value: Any, max_chars: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3].rsplit(" ", 1)[0].rstrip(".,;:") + "..."
 
 
 def _short_number(value: Any) -> str | None:
@@ -730,6 +791,9 @@ def _compact_recommendation_candidates(candidates: list[dict[str, Any]], *, them
             f"{title}:",
             f"themes={_compact_theme_list(theme_source, limit=theme_limit)}",
         ]
+        genres = _compact_genre_list(item.get("genres"), limit=2)
+        if genres:
+            parts.append(f"genre={genres}")
         mood = item.get("emotional_tone")
         if mood:
             parts.append(f"mood={mood}")
@@ -742,6 +806,11 @@ def _compact_recommendation_candidates(candidates: list[dict[str, Any]], *, them
         evidence_count = item.get("evidence_count")
         if isinstance(evidence_count, (int, float)):
             parts.append(f"evidence={int(evidence_count)}")
+        review_excerpt = item.get("review_excerpt")
+        if review_excerpt:
+            source = item.get("review_source")
+            review = _shorten_text(review_excerpt, RECO_REVIEW_SNIPPET_CHARS)
+            parts.append(f"review({source})={review}" if source else f"review={review}")
         lines.append(" ".join(parts))
     return "\n".join(lines)
 
@@ -780,6 +849,61 @@ def _format_fallback_chunks(chunks: list[RetrievedChunk], *, max_chunks: int = 4
             snippet = snippet[: max_text_chars - 3].rstrip() + "..."
         lines.append(f"[{index}] {title} ({source}) - {snippet}")
     return "\n".join(lines)
+
+
+def _title_chunk_filters(*, title_id: Any, title: Any) -> list[dict[str, Any]]:
+    filters: list[dict[str, Any]] = []
+    if title_id not in (None, ""):
+        filters.append({"title_id": str(title_id)})
+    if title not in (None, ""):
+        filters.append({"title_name": str(title)})
+    return filters
+
+
+def _is_review_metadata(metadata: dict[str, Any]) -> bool:
+    values = " ".join(
+        str(metadata.get(key) or "").casefold()
+        for key in ("source_name", "document_type", "chunk_source_type", "document_id")
+    )
+    return "review" in values
+
+
+def _review_priority(metadata: dict[str, Any], text: str) -> tuple[int, int]:
+    values = " ".join(
+        str(metadata.get(key) or "").casefold()
+        for key in ("source_name", "document_type", "chunk_source_type")
+    )
+    priority = 0
+    if "tmdb" in values and "review" in values:
+        priority += 3
+    if "user_review" in values:
+        priority += 2
+    if "review" in values:
+        priority += 1
+    return priority, min(len(text.split()), 180)
+
+
+def _select_representative_review_chunk(result: dict[str, Any]) -> RetrievedChunk | None:
+    ids = result.get("ids") or []
+    documents = result.get("documents") or []
+    metadatas = result.get("metadatas") or []
+    candidates: list[RetrievedChunk] = []
+    for chunk_id, document, metadata in zip(ids, documents, metadatas, strict=False):
+        metadata = metadata or {}
+        document = document or ""
+        if not _is_review_metadata(metadata) or not str(document).strip():
+            continue
+        candidates.append(
+            RetrievedChunk(
+                chunk_id=str(chunk_id),
+                chunk_text=str(document),
+                metadata=metadata,
+                distance=0.0,
+            )
+        )
+    if not candidates:
+        return None
+    return max(candidates, key=lambda chunk: _review_priority(chunk.metadata, chunk.chunk_text))
 
 
 def _build_recommendation_prompt(
@@ -836,6 +960,7 @@ def _build_recommendation_prompt(
     if trimmed:
         LOGGER.info("recommendation_prompt_trimmed=true")
     LOGGER.info("recommendation_prompt_tokens_approx=%s", token_estimate)
+    LOGGER.info("recommendation_prompt_tokens=%s", token_estimate)
     return PromptResult(
         system_prompt=RECOMMENDATION_SYSTEM_PROMPT,
         user_prompt=user_prompt,
@@ -870,7 +995,12 @@ def _compose_recommendation_user_prompt(
         "- Why it fits: max 2 sentences\n"
         "- Evidence: max 2 bullet points\n"
         "- Confidence: low/medium/high\n\n"
-        "Keep the answer concise. Do not add extra sections or long explanations."
+        "Avoid repeating the same justification across titles. Emphasize a different distinguishing "
+        "characteristic for each recommendation. Use review evidence for what makes a title unique "
+        "when available, such as performances, atmosphere, pacing, relationships, emotional impact, "
+        "visual style, originality, critic consensus, or audience reactions. If two titles share "
+        "themes, explain how they differ. Do not add facts beyond the provided evidence. Keep the "
+        "answer concise."
     )
     return user_prompt
 

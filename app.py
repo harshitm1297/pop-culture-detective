@@ -35,11 +35,11 @@ from cultural_mood_tracker.rag.prompting import DEFAULT_MAX_CONTEXT_CHARS
 # Same mode -> color mapping used in the terminal (scripts/chat.py)'s rich output, so the two
 # frontends stay visually consistent for anyone using both.
 MODE_INFO: dict[str, dict[str, str]] = {
-    "fast_sql": {"label": "SQL", "color": "#5fc9d4", "description": "Answered directly from MotherDuck (no LLM call)."},
-    "sql": {"label": "SQL", "color": "#5fc9d4", "description": "Answered directly from MotherDuck (no LLM call)."},
-    "rag": {"label": "RAG", "color": "#6fcf7d", "description": "Answered from retrieved review/summary text in ChromaDB."},
-    "hybrid": {"label": "HYBRID", "color": "#d88ce8", "description": "Answered using MotherDuck facts + ChromaDB evidence together."},
-    "recommendation": {"label": "RECOMMENDATION", "color": "#f2c14e", "description": "Answered from MotherDuck theme/genre analytics, with RAG as a fallback."},
+    "fast_sql": {"label": "FAST SQL", "color": "#5fc9d4", "description": "Answered directly from compact MotherDuck analytics; skips embedding, ChromaDB, and LLM."},
+    "sql": {"label": "SQL", "color": "#5fc9d4", "description": "Answered from structured MotherDuck facts."},
+    "rag": {"label": "RAG", "color": "#6fcf7d", "description": "Answered from a small set of retrieved ChromaDB review/summary chunks."},
+    "hybrid": {"label": "HYBRID", "color": "#d88ce8", "description": "Answered from SQL metrics first, then compact ChromaDB evidence for interpretation."},
+    "recommendation": {"label": "RECOMMENDATION", "color": "#f2c14e", "description": "SQL-ranked recommendations enriched with one exact-title review excerpt per candidate."},
 }
 
 
@@ -150,6 +150,11 @@ section[data-testid="stSidebar"] {
     margin: 0.3rem 0;
     font-size: 0.85rem;
 }
+.detail-caption {
+    color: #9a9eab;
+    font-size: 0.82rem;
+    line-height: 1.35rem;
+}
 </style>
 """
 
@@ -236,6 +241,10 @@ def _render_meta(entry: dict[str, Any]) -> None:
     sql_flag_html = '<span class="sql-flag">uses SQL</span>' if entry.get("used_sql") else ""
     st.markdown(f'<div class="meta-row">{badge}{elapsed_html}{sql_flag_html}</div>', unsafe_allow_html=True)
 
+    sql_results = entry.get("sql_results") or {}
+    if sql_results:
+        _render_structured_data(entry.get("mode"), sql_results)
+
     sql_queries = entry.get("sql_queries") or []
     if sql_queries:
         with st.expander(f"SQL queries used ({len(sql_queries)})"):
@@ -245,15 +254,83 @@ def _render_meta(entry: dict[str, Any]) -> None:
 
     evidence = entry.get("evidence") or []
     if evidence:
-        with st.expander(f"Retrieved documents ({len(evidence)})"):
+        label = "Recommendation review excerpts" if entry.get("mode") == "recommendation" else "Retrieved evidence"
+        with st.expander(f"{label} ({len(evidence)})"):
             for index, item in enumerate(evidence, start=1):
                 title = item.get("title") or "Unknown title"
                 source = item.get("source") or "unknown source"
                 document_type = item.get("document_type") or "text"
                 similarity = item.get("similarity")
-                similarity_str = f"{similarity:.3f}" if isinstance(similarity, (int, float)) else "n/a"
-                st.markdown(f"**{index}. {title}** &mdash; {source} / {document_type} (similarity {similarity_str})")
+                lookup = item.get("lookup")
+                similarity_str = (
+                    lookup
+                    if lookup
+                    else f"similarity {similarity:.3f}" if isinstance(similarity, (int, float))
+                    else "exact-title lookup"
+                )
+                st.markdown(f"**{index}. {title}** &mdash; {source} / {document_type} ({similarity_str})")
                 st.caption(item.get("chunk_id", ""))
+                snippet = item.get("snippet")
+                if snippet:
+                    st.markdown(f'<p class="detail-caption">{snippet}</p>', unsafe_allow_html=True)
+
+
+def _render_structured_data(mode: str | None, sql_results: dict[str, Any]) -> None:
+    if mode == "recommendation":
+        candidates = sql_results.get("recommendation_candidates") or []
+        genres = sql_results.get("genre_theme_summary") or []
+        if candidates:
+            with st.expander(f"SQL-ranked recommendation candidates ({len(candidates)})"):
+                for index, candidate in enumerate(candidates, start=1):
+                    title = candidate.get("title") or "Unknown title"
+                    themes = _join_list(candidate.get("dominant_themes") or candidate.get("audience_themes") or candidate.get("editorial_themes"), 4)
+                    genres_text = _join_list(candidate.get("genres"), 3)
+                    rating = candidate.get("avg_rating")
+                    attention = candidate.get("attention_score")
+                    mood = candidate.get("emotional_tone")
+                    st.markdown(f"**{index}. {title}**")
+                    st.caption(
+                        " | ".join(
+                            part
+                            for part in (
+                                f"genres: {genres_text}" if genres_text else "",
+                                f"themes: {themes}" if themes else "",
+                                f"mood: {mood}" if mood else "",
+                                f"rating: {rating}" if rating is not None else "",
+                                f"attention: {attention}" if attention is not None else "",
+                            )
+                            if part
+                        )
+                    )
+        if genres:
+            with st.expander(f"Genre signals ({len(genres)})"):
+                st.json(genres)
+        return
+
+    query_type = sql_results.get("query_type") or sql_results.get("hybrid_query_type")
+    title = sql_results.get("title")
+    label = "Structured SQL data"
+    if query_type:
+        label += f" - {query_type}"
+    if title:
+        label += f" - {title}"
+    with st.expander(label):
+        st.json(sql_results)
+
+
+def _join_list(value: Any, limit: int) -> str:
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, list):
+        return ""
+    return ", ".join(str(item) for item in value[:limit])
+
+
+def _snippet(text: Any, max_chars: int = 220) -> str:
+    normalized = " ".join(str(text or "").split())
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[: max_chars - 3].rsplit(" ", 1)[0].rstrip(".,;:") + "..."
 
 
 def _render_message(entry: dict[str, Any]) -> None:
@@ -274,7 +351,8 @@ with st.sidebar:
     st.markdown('<p class="sidebar-title">Cultural Mood Tracker</p>', unsafe_allow_html=True)
     st.markdown(
         '<p class="sidebar-caption">A chat interface over the project\'s SQL + RAG orchestrator. '
-        "Every answer is routed to the retrieval strategy that fits the question.</p>",
+        "Routing is deterministic: SQL handles facts, RAG handles text evidence, hybrid combines "
+        "metrics with evidence, and recommendations are SQL-ranked with one review excerpt per title.</p>",
         unsafe_allow_html=True,
     )
 
@@ -326,11 +404,13 @@ if query:
                     {
                         "chunk_id": item.chunk_id,
                         "similarity": item.similarity,
-                        "title": item.title,
-                        "source": item.source,
-                        "document_type": item.document_type,
+                        "title": item.metadata.get("title_name"),
+                        "source": item.metadata.get("source_name"),
+                        "document_type": item.metadata.get("document_type") or item.metadata.get("chunk_source_type"),
+                        "snippet": _snippet(item.chunk_text),
+                        "lookup": "exact-title review" if result.mode == "recommendation" else None,
                     }
-                    for item in result.evidence
+                    for item in result.retrieved_chunks
                 ]
                 assistant_entry = {
                     "role": "assistant",
@@ -339,6 +419,7 @@ if query:
                     "used_sql": result.used_sql,
                     "elapsed": elapsed,
                     "sql_queries": sql_queries,
+                    "sql_results": result.sql_results,
                     "evidence": evidence,
                     "error": False,
                 }
@@ -350,6 +431,7 @@ if query:
                     "used_sql": False,
                     "elapsed": None,
                     "sql_queries": [],
+                    "sql_results": {},
                     "evidence": [],
                     "error": True,
                 }

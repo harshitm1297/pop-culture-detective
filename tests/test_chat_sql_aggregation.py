@@ -18,6 +18,7 @@ from cultural_mood_tracker.chat.orchestrator import (
     _build_recommendation_prompt,
     _classify_hybrid_query,
     _format_fast_sql_answer,
+    _select_representative_review_chunk,
     rank_recommendation_candidates,
 )
 from cultural_mood_tracker.chat.prompt_compression import (
@@ -268,6 +269,45 @@ class ChatSqlAggregationTests(unittest.TestCase):
         )
         self.assertLess(estimate_tokens(prompt.system_prompt + prompt.user_prompt), 1200)
         self.assertNotIn("full", prompt.user_prompt.lower())
+
+    def test_recommendation_prompt_includes_compact_review_evidence(self) -> None:
+        prompt = _build_recommendation_prompt(
+            query="Recommend something comforting.",
+            candidates=[
+                {
+                    "title": "Disclosure Day",
+                    "genres": ["Science Fiction", "Thriller"],
+                    "dominant_themes": ["hope", "truth", "connection"],
+                    "emotional_tone": "positive",
+                    "avg_rating": 8.1,
+                    "attention_score": 34000,
+                    "review_source": "tmdb",
+                    "review_excerpt": "A hopeful sci-fi story with strong performances and genuine human connection.",
+                }
+            ],
+            genre_theme_rows=[],
+            fallback_chunks=[],
+        )
+
+        self.assertIn("review(tmdb)=A hopeful sci-fi story", prompt.user_prompt)
+        self.assertIn("Avoid repeating the same justification", prompt.user_prompt)
+        self.assertIn("what makes a title unique", prompt.user_prompt)
+        self.assertLess(estimate_tokens(prompt.system_prompt + prompt.user_prompt), 1200)
+
+    def test_representative_review_chunk_prefers_reviews(self) -> None:
+        chunk = _select_representative_review_chunk(
+            {
+                "ids": ["overview_1", "review_1"],
+                "documents": ["An overview.", "A user review with distinctive emotional audience reaction."],
+                "metadatas": [
+                    {"title_name": "Disclosure Day", "document_type": "overview", "source_name": "tmdb"},
+                    {"title_name": "Disclosure Day", "document_type": "user_review", "source_name": "tmdb"},
+                ],
+            }
+        )
+
+        self.assertIsNotNone(chunk)
+        self.assertEqual(chunk.chunk_id, "review_1")
 
     def test_comparison_title_extraction_preserves_both_titles(self) -> None:
         self.assertEqual(
