@@ -12,6 +12,7 @@ Run with:
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -40,6 +41,16 @@ MODE_INFO: dict[str, dict[str, str]] = {
     "rag": {"label": "RAG", "color": "#6fcf7d", "description": "Answered from a small set of retrieved ChromaDB review/summary chunks."},
     "hybrid": {"label": "HYBRID", "color": "#d88ce8", "description": "Answered from SQL metrics first, then compact ChromaDB evidence for interpretation."},
     "recommendation": {"label": "RECOMMENDATION", "color": "#f2c14e", "description": "SQL-ranked recommendations enriched with one exact-title review excerpt per candidate."},
+}
+
+# Set CMT_SHOW_TECHNICAL_DETAILS=false (in .env or the shell environment) to hide the
+# "Structured SQL data" / "SQL queries used" / "Retrieved evidence" expanders from end
+# users -- e.g. for a live demo or a non-technical audience. The mode badge and elapsed-time
+# pill still show either way; only the debug/inspection panels are gated by this flag.
+SHOW_TECHNICAL_DETAILS = os.environ.get("CMT_SHOW_TECHNICAL_DETAILS", "true").strip().lower() not in {
+    "0",
+    "false",
+    "no",
 }
 
 
@@ -240,6 +251,9 @@ def _render_meta(entry: dict[str, Any]) -> None:
     elapsed_html = f'<span class="elapsed-pill">{elapsed:.2f}s</span>' if elapsed is not None else ""
     sql_flag_html = '<span class="sql-flag">uses SQL</span>' if entry.get("used_sql") else ""
     st.markdown(f'<div class="meta-row">{badge}{elapsed_html}{sql_flag_html}</div>', unsafe_allow_html=True)
+
+    if not SHOW_TECHNICAL_DETAILS:
+        return
 
     sql_results = entry.get("sql_results") or {}
     if sql_results:
